@@ -183,15 +183,32 @@ void setup()
 void loop() 
 {
   time_t nextMooverTime;
-  
+  int daysNextMoover; 
+
   if ((long) (millis() - refreshTimer) > 0 )
   {
     DateTime now = RTC.now();
-    
-    // Calculate time until next moover
-    if ( now.hour() < 6 )
+
+    // Calculate days until next time Moover will come.  Zero if Moover is running today
+    daysNextMoover = daysUntilNextMoover();
+
+    // Determine next Moover time
+    if ( daysNextMoover > 0 )
     {
-      // Early morning, next moover is the first one at 6:50 AM
+      // Next is sometime after today
+      Serial.print("Days to next Moover: ");
+      Serial.println(daysNextMoover);
+      tm.Second = 0;
+      tm.Minute = 50;
+      tm.Hour = 6;
+      tm.Day = now.day();
+      tm.Month = now.month();
+      tm.Year = now.year() - 1970;
+      nextMooverTime =  makeTime(tm) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
+    }
+    else if ( now.hour() < 6 )
+    {
+      // Early morning, next Moover is the first one at 6:50 AM
       Serial.println("Early Morning");
       tm.Second = 0; 
       tm.Minute = 50;
@@ -201,55 +218,43 @@ void loop()
       tm.Year = now.year() - 1970;
       nextMooverTime =  makeTime(tm); 
     }
-    else if ( now.hour() > 17 )
-    {  
-      // Next moover time is tomorrow at 6:50 AM
-      Serial.println("Tomorrow");
-      tm.Second = 0; 
-      tm.Minute = 50;
-      tm.Hour = 6;
-      tm.Day = now.day();
-      tm.Month = now.month();
-      tm.Year = now.year() - 1970;
-      nextMooverTime =  makeTime(tm) + 24UL * 3600UL;  // to deal with month rollover, it's easier to just add 24 hours of seconds to the time 
-    }
     else if ( now.hour() < 12 )
     {
       Serial.println("Morning Schedule");
 
-      // morning moover schedule
+      // morning Moover schedule
       if (now.minute() < 20)
       {
-        // Next moover time is 20 minutes past the hour
+        // Next Moover time is 20 minutes past the hour
         tm.Second = 0; 
         tm.Minute = 20;
         tm.Hour = now.hour();
         tm.Day = now.day();
         tm.Month = now.month();
         tm.Year = now.year() - 1970;
-        nextMooverTime =  makeTime(tm);  // to deal with month rollover, it's easier to just add 24 hours of seconds to the time 
+        nextMooverTime =  makeTime(tm);  
       }
       else if (now.minute() < 50 || now.hour() == 6 )
       {
-        // Next moover time is 50 minutes past the hour
+        // Next Moover time is 50 minutes past the hour
         tm.Second = 0; 
         tm.Minute = 50;
         tm.Hour = now.hour();
         tm.Day = now.day();
         tm.Month = now.month();
         tm.Year = now.year() - 1970;
-        nextMooverTime =  makeTime(tm);  // to deal with month rollover, it's easier to just add 24 hours of seconds to the time 
+        nextMooverTime =  makeTime(tm);  
       }
       else
       {
-        // Next moover time is 20 minutes past the next hour
+        // Next Moover time is 20 minutes past the next hour
         tm.Second = 0; 
         tm.Minute = 20;
         tm.Hour = now.hour() + 1;
         tm.Day = now.day();
         tm.Month = now.month();
         tm.Year = now.year() - 1970;
-        nextMooverTime =  makeTime(tm);  // to deal with month rollover, it's easier to just add 24 hours of seconds to the time 
+        nextMooverTime =  makeTime(tm);  
        }
     }
     else
@@ -277,22 +282,22 @@ void loop()
       tm.Day = now.day();
       tm.Month = now.month();
       tm.Year = now.year() - 1970;
-      nextMooverTime =  makeTime(tm);  // to deal with month rollover, it's easier to just add 24 hours of seconds to the time 
+      nextMooverTime =  makeTime(tm);  
     }
    
     displayCountdown(nextMooverTime); // display countdown timer
     refreshTimer = millis() + 500;    // update display every 1/2 second
 
     // Play 2 minute warning
-    if ( moover_hrs == 0 & moover_min == 2 & moover_sec == 1 )
+    if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 1 )
     { playTwoMinWarning(nextMooverTime); }
 
 
     // Countdown complete, display bus
-    if (  moover_hrs == 0 & moover_min == 0 & moover_sec == 1)
+    if (  moover_hrs == 0 && moover_min == 0 && moover_sec == 1)
     {
       // only play sound in the morning
-      if (now.hours < 12)
+      if (now.hour() < 12)
       { displayBus(true); } // show bus with sound
       else
       { displayBus(false); } // show bus without sound
@@ -464,23 +469,41 @@ int daysUntilNextMoover()
   int seasonEndYear = now.year();
   if ( now.month() >= 10 )
   { seasonEndYear++; } // It's still start of season, season end year is next year 
-  
-  // Check for Saturday or Sunday between Saturday after Thanksgiving and April 15
-  if ( now.unixtime() > ( thanksgiving(now.year()) + 2UL * UNIXDAY) && now.unixtime() < (convertDay(seasonEndYear, 4, 16) ) && (now.dayOfWeek2() == 6 || now.dayOfWeek2() == 7) )
+
+  // If it's off seasion return 2 days after Thanksgiving
+  if ( now.unixtime() < thanksgiving(now.year()) && now.unixtime() > convertDay(now.year(), 4, 16))
+  { return  ((thanksgiving(now.year()) + 2UL * UNIXDAY ) - now.unixtime() ) / UNIXDAY; }
+
+  // Check it today is a Saturday between Thanksgiving and April 15
+  if ( now.unixtime() > thanksgiving(now.year()) && now.unixtime() < convertDay(seasonEndYear, 4, 16) && now.dayOfWeek2() == 6 )
   {
-    return 0;  // Moover runs today   
-  }
+    if ( now.hour() < 17 )
+    { return 0; } // Moover runs today
+    else
+    { return 1; } // It's after 5PM, Moover runs tomorrow
+  }  
   
-  // see if any days in the next 7 are holiday, including today
-  for (int d = 0; d < 7; d++)
+  // Check if today is a Sunday between Thanksgiving and April 15 and time is < 5 PM
+  if ( now.unixtime() > thanksgiving(now.year()) && now.unixtime() < convertDay(seasonEndYear, 4, 16) && now.dayOfWeek2() == 7 && now.hour() < 17)
+  { return 0; } // Moover runs today
+
+  // see if any days in the next 7 are a holiday
+  int d = 0;
+  if (now.hour() >= 17) // if it's after 5PM, don't including today
+  { d = 1; }
+  for (d; d < 7; d++)
   {
   if (isHoliday(now.unixtime()) + UNIXDAY * d)
     { return d; }
   }
-  
-  // it's off seasion; season starts 2 days after Thanksgiving
-  return  ((thanksgiving(now.year()) + 2UL * UNIXDAY ) - now.unixtime() ) / UNIXDAY;
-   
+
+  // If today is Sunday after 5PM, return next Saturday
+  if (now.dayOfWeek2() == 7 && now.hour() >= 17)
+  { return 6; }
+
+  // Next Moover is next Saturday
+  return 6 - now.dayOfWeek2();
+
 } // end daysUntilNextMoover()
 
 
@@ -516,8 +539,8 @@ time_t thanksgiving(int yr)
   time_t t;
   tmElements_t tm;
   tm.Second = 0;
-  tm.Minute = 50;
-  tm.Hour = 6;
+  tm.Minute = 0;
+  tm.Hour = 0;
   tm.Month = 11;
   tm.Year = yr - 1970;
   
