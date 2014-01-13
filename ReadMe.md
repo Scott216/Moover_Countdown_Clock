@@ -24,6 +24,4 @@ BoM
 * Screws and standoffs for PCBs and speaker
 * DC jack for power
 
-Sound of woman announcing Moover: [http://www.oddcast.com/home/demos/tts/tts_example.php oddcast.com], Bridget (UK), Effect: Reverb <br>
-
-Me showing clock on Adafruit's [http://www.youtube.com/watch?v=uAxHblZRD78&list=UUpOlOeQjj7EsVnDh3zuCgsA&feature=c4-overview&t=16m50s Show & Tell] <br>
+Sound of woman announcing Moover: [oddcast.com](http://www.oddcast.com/home/demos/tts/tts_example.php) , Bridget (UK), Effect: Reverb <br>
