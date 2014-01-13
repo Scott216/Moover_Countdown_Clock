@@ -9,7 +9,7 @@ Has two 16x32 RGB displays. [Adafruit's library](http://github.com/adafruit/RGB-
 
 
 BoM 
-* 1x Arduino Mega Pro (5V) from [http://www.sparkfun.com/products/11007 Sparkfun]
+* 1x Arduino Mega Pro (5V) from [Sparkfun](http://www.sparkfun.com/products/11007)
 * 1x [Speaker](http://www.adafruit.com/products/1313) 8 ohm
 * 1x [Audio board](http://www.adafruit.com/products/1381) 
 * 1x [Audio Amp](http://www.adafruit.com/products/1552) , 2.8 watt
