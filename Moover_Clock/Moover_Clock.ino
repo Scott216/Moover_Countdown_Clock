@@ -1,5 +1,4 @@
 /*
-Daylight savings: Second sunday in March and First Sunday in November
 
 The Moover runs on weekends starting on the Saturday after Thanksgiving.  The end date is flexible.
 It also runs on holidays: The whole week between Xmas and New Years, MLK day and the whole week of President's day.
@@ -65,6 +64,8 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 
 
 #define UNIXDAY 86400 // seconds in one day
+#define DOW_SAT 6     // Returned by now.dayOfWeek2()
+#define DOW_SUN 0
 
 // Matrix display Pin definitions for Mega
 #define CLK 12
@@ -74,7 +75,7 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #define C   34 
 #define LAT 36 
 
-#define SINGLEBUFFER true  // When true, increases refresh rate so there is no flickering
+#define DOUBLEBUFFER false  // When true increases refresh rate so there is no flickering. But in this sketch, display is blank when true
 #define NUMDISPLAYS 2
 
 // Pins for audio player
@@ -86,7 +87,7 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 
 #define VOLUMEPIN 0   // Analog input for volume adjustment
 
-RGBmatrixPanel matrix(A, B, C, CLK, LAT, OE, SINGLEBUFFER, NUMDISPLAYS);
+RGBmatrixPanel matrix(A, B, C, CLK, LAT, OE, DOUBLEBUFFER, NUMDISPLAYS);
 RTC_DS1307 RTC;
 Adafruit_VS1053_FilePlayer musicPlayer = Adafruit_VS1053_FilePlayer(RESET, VS1053CS, DCS, DREQ, SDCARDCS);
 
@@ -144,28 +145,30 @@ void setup()
   Serial.println(F("Moover Clock Setup"));
   matrix.begin();  // initialize display
   
-
+  
   // Initialize the music player
   if (musicPlayer.begin()) 
   {
     musicPlayer.sineTest(0x44, 500);  // Make a tone to indicate VS1053 is working, this resets the volume, so use it before setVolume
-    musicPlayer.setVolume(30,30);     // Set volume for left, right channels. lower numbers = louder volume
-    if (! musicPlayer.useInterrupt(VS1053_FILEPLAYER_PIN_INT))
+    musicPlayer.setVolume(255,255);     // Set volume to zero
+    if (! musicPlayer.useInterrupt(VS1053_FILEPLAYER_PIN_INT))  // do not remove
     { Serial.println(F("DREQ pin is not an interrupt pin")); }
   }
   else
-  { Serial.println(F("VS1053 not found")); }  
+  { Serial.println(F("VS1053 Sound card not found")); }  
+
   // Initialize SD card
   if ( SD.begin(SDCARDCS) ) 
   { Serial.println(F("SD OK!")); }
   else
   { Serial.println(F("SD failed, or not present")); }
 
- 
+
   // Set text size and color
   matrix.setTextSize(1);    // size 1 == 8 pixels high
-  matrix.setTextColor(matrix.Color333(0,7,0));  
-  
+  matrix.setTextColor(matrix.Color333(0,7,0));
+  matrix.fillScreen(matrix.Color333(0, 0, 0)); // clear screen
+ 
   // Start communication to clock
   Wire.begin();
   RTC.begin();
@@ -173,7 +176,7 @@ void setup()
   { Serial.println(F("RTC is NOT running!")); }
   
 //  RTC.adjust(DateTime(__DATE__, __TIME__));
-  RTC.adjust(DateTime(2013, 12, 9, 7, 49, 54 ));  // use for debugging
+  RTC.adjust(DateTime(2014, 2, 18, 7, 49, 57 ));  // use for debugging
 
   refreshTimer = millis();  // Initialize display refresh timer
 
@@ -196,7 +199,7 @@ void loop()
     if ( daysNextMoover > 0 )
     {
       // Next is sometime after today
-      Serial.print("Days to next Moover: ");
+      Serial.print(F("Day to next moover: "));
       Serial.println(daysNextMoover);
       tm.Second = 0;
       tm.Minute = 50;
@@ -209,7 +212,7 @@ void loop()
     else if ( now.hour() < 6 )
     {
       // Early morning, next Moover is the first one at 6:50 AM
-      Serial.println("Early Morning");
+      Serial.println(F("Early Morning"));
       tm.Second = 0; 
       tm.Minute = 50;
       tm.Hour = 6;
@@ -218,9 +221,9 @@ void loop()
       tm.Year = now.year() - 1970;
       nextMooverTime =  makeTime(tm); 
     }
-    else if ( now.hour() < 12 )
+    else if ( now.hour() < 11 || (now.hour() == 11 && now.minute() <= 20) )
     {
-      Serial.println("Morning Schedule");
+      Serial.println(F("Morning Schedule"));
 
       // morning Moover schedule
       if (now.minute() < 20)
@@ -259,7 +262,7 @@ void loop()
     }
     else
     {
-       Serial.println("Afternoon Schedule ");
+       Serial.println(F("Afternoon Schedule "));
        
       // Afternoon schedule, Moover leaves Mount Snow on the every half hour on the half hour, but it varies when it arrives 
       // assume it will arrive at 15 & 45 minutes past the hour
@@ -284,12 +287,12 @@ void loop()
       tm.Year = now.year() - 1970;
       nextMooverTime =  makeTime(tm);  
     }
-   
+
     displayCountdown(nextMooverTime); // display countdown timer
     refreshTimer = millis() + 500;    // update display every 1/2 second
 
     // Play 2 minute warning
-    if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 1 )
+    if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 0 )
     { playTwoMinWarning(nextMooverTime); }
 
 
@@ -303,8 +306,11 @@ void loop()
       { displayBus(false); } // show bus without sound
       moover_hrs_prev = -1;  // forces hours to refresh in display
     }
+    checkDaylightSavings(now); 
+    Serial.print("vol: "); Serial.println(analogRead(VOLUMEPIN) / 11);
   }  // refresh
-
+  
+  
 }  // end loop()
 
 
@@ -312,6 +318,7 @@ void displayCountdown(time_t nextMooverTime)
 {
   char countdownbuf[10]; 
   const byte countdnStartPos = 12;
+  byte highHrsPosOffset; // If hours are over 100, then you need to change house starting column
   DateTime now = RTC.now();
 
   uint32_t countDownTime = nextMooverTime - now.unixtime();
@@ -319,8 +326,8 @@ void displayCountdown(time_t nextMooverTime)
   countDownTime /= 60; // convert to minutes
   moover_min = countDownTime % 60; // get minutes
   countDownTime /= 60; // convert to hours
-  moover_hrs = countDownTime % 24; // get hours
-  
+  moover_hrs = countDownTime; // get hours
+
   sprintf(countdownbuf, "%02d:%02d:%02d    ", moover_hrs, moover_min, moover_sec);
   Serial.print(countdownbuf);
   sprintf(countdownbuf, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
@@ -335,19 +342,27 @@ void displayCountdown(time_t nextMooverTime)
   {
     // Delete old hours digits
     matrix.setTextColor(0);  
-    if (moover_hrs_prev == 1 || moover_hrs_prev == 11) 
-    { matrix.setCursor(countdnStartPos + 1 , 9); } // Move hours to the right 1 row
+    if ( moover_hrs_prev > 99 )
+    { highHrsPosOffset = 5; }
     else
-    { matrix.setCursor(countdnStartPos, 9); }
+    { highHrsPosOffset = 0; }
+    if (moover_hrs_prev % 10 == 1 )  // If right digit is a 1, then move hours to the right 1 row
+    { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset, 9); }  
+    else
+    { matrix.setCursor(countdnStartPos - highHrsPosOffset, 9); }
     sprintf(countdownbuf, "%02d", moover_hrs_prev);
     matrix.print(countdownbuf);
 
     // display new hour
-    matrix.setTextColor(matrix.Color333(0,7,0));  
-    if (moover_hrs == 1 || moover_hrs == 11) 
-    { matrix.setCursor(countdnStartPos + 1 , 9); } // Move hours to the right 1 row
+    if ( moover_hrs > 99 )
+    { highHrsPosOffset = 5; }
     else
-    { matrix.setCursor(countdnStartPos, 9); }
+    { highHrsPosOffset = 0; }
+    matrix.setTextColor(matrix.Color333(0,7,0));  
+    if (moover_hrs % 10 == 1)    // If right digit is a 1, then move hours to the right 1 row
+    { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset , 9); }  
+    else
+    { matrix.setCursor(countdnStartPos - highHrsPosOffset, 9); }
     sprintf(countdownbuf, "%02d", moover_hrs);
     matrix.print(countdownbuf);
   }
@@ -396,14 +411,13 @@ void displayCountdown(time_t nextMooverTime)
 // Start bus scrolling across the screen and play moover sound
 void displayBus(bool withSound)
 {
-
   int scrollDelay = 120;
   
   if (withSound) 
   {
-    int volLevel = analogRead(VOLUMEPIN / 4);
+    int volLevel = analogRead(VOLUMEPIN) / 11;
     musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
-
+    
     // Start playing a file, then we can do stuff while waiting for it to finish
     // File names should be < 8 characters
     // moover1.mp3 is cow sound, arrive2x.mp3 is woman announcing moover
@@ -440,12 +454,12 @@ void displayBus(bool withSound)
 void playTwoMinWarning(time_t nextMooverTime)
 {
 
-  int volLevel = analogRead(VOLUMEPIN / 4);
+  int volLevel = analogRead(VOLUMEPIN) / 11;
   musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
 
   // Start playing a file
-  // File names should be < 8 characters
-  if (! musicPlayer.startPlayingFile("arrive.mp3"))
+  // File names should be < 8 characters  
+  if (! musicPlayer.startPlayingFile("twomin1.mp3"))
   { Serial.println(F("Could not open mp3 file on SD card")); }
 
   // while sound is playing, scroll the bus across the display
@@ -453,7 +467,7 @@ void playTwoMinWarning(time_t nextMooverTime)
   {
     // Display time
     displayCountdown(nextMooverTime); // display countdown timer
-    delay(500);
+    delay(100);
   }
 
   musicPlayer.setVolume(255,255); // 255 turns volume off
@@ -466,35 +480,42 @@ void playTwoMinWarning(time_t nextMooverTime)
 int daysUntilNextMoover()
 {
   DateTime now = RTC.now();
+  
   int seasonEndYear = now.year();
   if ( now.month() >= 10 )
   { seasonEndYear++; } // It's still start of season, season end year is next year 
-
+  
   // If it's off seasion return 2 days after Thanksgiving
   if ( now.unixtime() < thanksgiving(now.year()) && now.unixtime() > convertDay(now.year(), 4, 16))
   { return  ((thanksgiving(now.year()) + 2UL * UNIXDAY ) - now.unixtime() ) / UNIXDAY; }
 
-  // Check it today is a Saturday between Thanksgiving and April 15
-  if ( now.unixtime() > thanksgiving(now.year()) && now.unixtime() < convertDay(seasonEndYear, 4, 16) && now.dayOfWeek2() == 6 )
+  // Check if today is a Saturday 
+  if ( now.dayOfWeek2() == DOW_SAT )
   {
     if ( now.hour() < 17 )
     { return 0; } // Moover runs today
     else
     { return 1; } // It's after 5PM, Moover runs tomorrow
   }  
-  
-  // Check if today is a Sunday between Thanksgiving and April 15 and time is < 5 PM
-  if ( now.unixtime() > thanksgiving(now.year()) && now.unixtime() < convertDay(seasonEndYear, 4, 16) && now.dayOfWeek2() == 7 && now.hour() < 17)
+
+  // Check if today is a Sunday  and time is < 5 PM
+  if ( now.dayOfWeek2() == DOW_SUN && now.hour() < 17)
   { return 0; } // Moover runs today
 
-  // see if any days in the next 7 are a holiday
+  // see if any days in the next 5 are a holiday
   int d = 0;
   if (now.hour() >= 17) // if it's after 5PM, don't including today
   { d = 1; }
-  for (d; d < 7; d++)
+  for (d; d < 5; d++)
   {
-  if (isHoliday(now.unixtime()) + UNIXDAY * d)
-    { return d; }
+  if ( isHoliday(now.unixtime() + UNIXDAY * d) )
+    { 
+      // See if a Saturday is before the  holiday
+      if ( ( 6 - now.dayOfWeek2()) < d )
+      { 6 - now.dayOfWeek2(); }  // Saturday comes first
+      else
+      { return d; }  // Holiday is next day Moover comes
+    }
   }
 
   // If today is Sunday after 5PM, return next Saturday
@@ -609,6 +630,40 @@ time_t president(int yr)
   } 
 } // end president()
 
+// Chack and adjust time for daylight savings
+bool checkDaylightSavings(DateTime now)
+{
+  
+  static bool daylightFlag; // prevents daylight savings from being adjusted more then once, really only an issue in November
+  static byte lastHourChecked; // only check DLS once an hour
+  
+  if ( lastHourChecked == now.hour() )
+  { return false; }; 
+  lastHourChecked = now.hour();  // It's a new hour, reset variable and go on to check for daylight savings
+  
+  if ( now.unixtime() == daylightMar(now.year()) && daylightFlag == false )
+  {
+    RTC.adjust(now.unixtime() + 3600);  // Add an hour
+    daylightFlag = true; 
+    Serial.println(F("Added 1 hour for dalylight savings"));
+    return true;
+  }
+  
+  if ( now.unixtime() == daylightNov(now.year()) && daylightFlag == false )
+  {
+    RTC.adjust(now.unixtime() - 3600);  // Subtract an hour
+    daylightFlag = true; 
+    Serial.println(F("Subtracted 1 hour for dalylight savings"));
+    return true;
+  }
+  
+  if (now.hour() == 3)
+  { daylightFlag == false; } // Reset flag
+  
+  return false;  // didn't adjust time
+  
+}  // checkDaylightSavings
+
 
 // Return November Daylight savings
 // 1st Sunday in November, 2 AM
@@ -636,7 +691,7 @@ time_t daylightNov(int yr)
 } // end daylightNov()
 
 
-// Return November Daylight savings
+// Return March Daylight savings
 // 2nd Sunday in March, 2 AM
 time_t daylightMar(int yr)
 {
