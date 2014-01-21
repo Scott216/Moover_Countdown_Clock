@@ -78,6 +78,8 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #define DOUBLEBUFFER false  // When true increases refresh rate so there is no flickering. But in this sketch, display is blank when true
 #define NUMDISPLAYS 2
 
+const float LASTMOOVER = 17.25; 
+
 // Pins for audio player
 #define DREQ      3   // VS1053 Data request pin, must be in an interrupt pin
 #define SDCARDCS  4   // SD Card chip select pin (output)
@@ -176,7 +178,7 @@ void setup()
   { Serial.println(F("RTC is NOT running!")); }
   
 //  RTC.adjust(DateTime(__DATE__, __TIME__));
-  RTC.adjust(DateTime(2014, 2, 18, 7, 49, 57 ));  // use for debugging
+//  RTC.adjust(DateTime(2014, 1, 18, 17, 14, 56 ));  // use for debugging
 
   refreshTimer = millis();  // Initialize display refresh timer
 
@@ -185,117 +187,17 @@ void setup()
 
 void loop() 
 {
-  time_t nextMooverTime;
-  int daysNextMoover; 
+  DateTime now = RTC.now();
 
   if ((long) (millis() - refreshTimer) > 0 )
   {
-    DateTime now = RTC.now();
-
-    // Calculate days until next time Moover will come.  Zero if Moover is running today
-    daysNextMoover = daysUntilNextMoover();
-
-    // Determine next Moover time
-    if ( daysNextMoover > 0 )
-    {
-      // Next is sometime after today
-      Serial.print(F("Day to next moover: "));
-      Serial.println(daysNextMoover);
-      tm.Second = 0;
-      tm.Minute = 50;
-      tm.Hour = 6;
-      tm.Day = now.day();
-      tm.Month = now.month();
-      tm.Year = now.year() - 1970;
-      nextMooverTime =  makeTime(tm) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
-    }
-    else if ( now.hour() < 6 )
-    {
-      // Early morning, next Moover is the first one at 6:50 AM
-      Serial.println(F("Early Morning"));
-      tm.Second = 0; 
-      tm.Minute = 50;
-      tm.Hour = 6;
-      tm.Day = now.day();
-      tm.Month = now.month();
-      tm.Year = now.year() - 1970;
-      nextMooverTime =  makeTime(tm); 
-    }
-    else if ( now.hour() < 11 || (now.hour() == 11 && now.minute() <= 20) )
-    {
-      Serial.println(F("Morning Schedule"));
-
-      // morning Moover schedule
-      if (now.minute() < 20)
-      {
-        // Next Moover time is 20 minutes past the hour
-        tm.Second = 0; 
-        tm.Minute = 20;
-        tm.Hour = now.hour();
-        tm.Day = now.day();
-        tm.Month = now.month();
-        tm.Year = now.year() - 1970;
-        nextMooverTime =  makeTime(tm);  
-      }
-      else if (now.minute() < 50 || now.hour() == 6 )
-      {
-        // Next Moover time is 50 minutes past the hour
-        tm.Second = 0; 
-        tm.Minute = 50;
-        tm.Hour = now.hour();
-        tm.Day = now.day();
-        tm.Month = now.month();
-        tm.Year = now.year() - 1970;
-        nextMooverTime =  makeTime(tm);  
-      }
-      else
-      {
-        // Next Moover time is 20 minutes past the next hour
-        tm.Second = 0; 
-        tm.Minute = 20;
-        tm.Hour = now.hour() + 1;
-        tm.Day = now.day();
-        tm.Month = now.month();
-        tm.Year = now.year() - 1970;
-        nextMooverTime =  makeTime(tm);  
-       }
-    }
-    else
-    {
-       Serial.println(F("Afternoon Schedule "));
-       
-      // Afternoon schedule, Moover leaves Mount Snow on the every half hour on the half hour, but it varies when it arrives 
-      // assume it will arrive at 15 & 45 minutes past the hour
-      tm.Second = 0; 
-      if ( now.minute() < 15 )
-      { 
-        tm.Minute = 15; 
-        tm.Hour = now.hour();
-      }
-      else if ( now.minute() < 45 )
-      { 
-        tm.Minute = 45; 
-        tm.Hour = now.hour();
-      }
-      else
-      { 
-        tm.Minute = 15; 
-        tm.Hour = now.hour() + 1 ;
-      }  
-      tm.Day = now.day();
-      tm.Month = now.month();
-      tm.Year = now.year() - 1970;
-      nextMooverTime =  makeTime(tm);  
-    }
-
-    displayCountdown(nextMooverTime); // display countdown timer
+    displayCountdown( nextMoover() ); // display countdown timer
     refreshTimer = millis() + 500;    // update display every 1/2 second
 
-    // Play 2 minute warning
-    if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 0 )
-    { playTwoMinWarning(nextMooverTime); }
-
-
+    // Play 2 minute warning, in the morning only
+    if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 0 && now.hour() < 12 )
+    { playTwoMinWarning( nextMoover() ); }
+  
     // Countdown complete, display bus
     if (  moover_hrs == 0 && moover_min == 0 && moover_sec == 1)
     {
@@ -307,172 +209,77 @@ void loop()
       moover_hrs_prev = -1;  // forces hours to refresh in display
     }
     checkDaylightSavings(now); 
-    Serial.print("vol: "); Serial.println(analogRead(VOLUMEPIN) / 11);
   }  // refresh
-  
-  
+
 }  // end loop()
 
 
-void displayCountdown(time_t nextMooverTime)
+time_t nextMoover()
 {
-  char countdownbuf[10]; 
-  const byte countdnStartPos = 12;
-  byte highHrsPosOffset; // If hours are over 100, then you need to change house starting column
-  DateTime now = RTC.now();
+    DateTime now = RTC.now();
 
-  uint32_t countDownTime = nextMooverTime - now.unixtime();
-  moover_sec = countDownTime % 60; // get seconds
-  countDownTime /= 60; // convert to minutes
-  moover_min = countDownTime % 60; // get minutes
-  countDownTime /= 60; // convert to hours
-  moover_hrs = countDownTime; // get hours
-
-  sprintf(countdownbuf, "%02d:%02d:%02d    ", moover_hrs, moover_min, moover_sec);
-  Serial.print(countdownbuf);
-  sprintf(countdownbuf, "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  Serial.println(countdownbuf);
- 
-  
-  matrix.setCursor(14, 0);   
-  matrix.print("Moover");
-  
-  // display hours
-  if ( moover_hrs != moover_hrs_prev)
-  {
-    // Delete old hours digits
-    matrix.setTextColor(0);  
-    if ( moover_hrs_prev > 99 )
-    { highHrsPosOffset = 5; }
-    else
-    { highHrsPosOffset = 0; }
-    if (moover_hrs_prev % 10 == 1 )  // If right digit is a 1, then move hours to the right 1 row
-    { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset, 9); }  
-    else
-    { matrix.setCursor(countdnStartPos - highHrsPosOffset, 9); }
-    sprintf(countdownbuf, "%02d", moover_hrs_prev);
-    matrix.print(countdownbuf);
-
-    // display new hour
-    if ( moover_hrs > 99 )
-    { highHrsPosOffset = 5; }
-    else
-    { highHrsPosOffset = 0; }
-    matrix.setTextColor(matrix.Color333(0,7,0));  
-    if (moover_hrs % 10 == 1)    // If right digit is a 1, then move hours to the right 1 row
-    { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset , 9); }  
-    else
-    { matrix.setCursor(countdnStartPos - highHrsPosOffset, 9); }
-    sprintf(countdownbuf, "%02d", moover_hrs);
-    matrix.print(countdownbuf);
-  }
-
-  matrix.setCursor(countdnStartPos + 10, 9);   
-  matrix.print(":");
-  
-  // display minutes
-  if ( moover_min != moover_min_prev)
-  {
-    // Delete old minutes digits
-    matrix.setTextColor(0);  
-    matrix.setCursor(countdnStartPos + 14, 9);   
-    sprintf(countdownbuf, "%02d", moover_min_prev);
-    matrix.print(countdownbuf);
+    // Calculate days until next time Moover will come.  Zero if Moover is running today
+    int daysNextMoover = daysUntilNextMoover();
+    Serial.print("Days to next moover "); Serial.println(daysNextMoover );  // srg debug
     
-    // display new mintues
-    matrix.setTextColor(matrix.Color333(0,7,0));  
-    matrix.setCursor(countdnStartPos + 14, 9);   
-    sprintf(countdownbuf, "%02d", moover_min);
-    matrix.print(countdownbuf);
-  }
-  
-  matrix.setCursor(countdnStartPos + 24, 9);   
-  matrix.print(":");
+    float decimalHour = (float)now.hour() + (float)now.minute()/60.0 + (float)now.second()/3600.0;
 
-  // delete old seconds digits
-  matrix.setTextColor(0);  
-  matrix.setCursor(countdnStartPos + 28, 9);   
-  sprintf(countdownbuf, "%02d", moover_sec_prev);
-  matrix.print(countdownbuf);
-  
-  // display new seconds
-  matrix.setTextColor(matrix.Color333(0,7,0));  
-  matrix.setCursor(countdnStartPos + 28, 9);   
-  sprintf(countdownbuf, "%02d", moover_sec);
-  matrix.print(countdownbuf);
-
-  moover_hrs_prev = moover_hrs;
-  moover_min_prev = moover_min;
-  moover_sec_prev = moover_sec;
-  
-}  // end displayCountdown()
-
-
-// Start bus scrolling across the screen and play moover sound
-void displayBus(bool withSound)
-{
-  int scrollDelay = 120;
-  
-  if (withSound) 
-  {
-    int volLevel = analogRead(VOLUMEPIN) / 11;
-    musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
-    
-    // Start playing a file, then we can do stuff while waiting for it to finish
-    // File names should be < 8 characters
-    // moover1.mp3 is cow sound, arrive2x.mp3 is woman announcing moover
-    if (! musicPlayer.startPlayingFile("arrive2x.mp3")) 
-    { Serial.println(F("Could not open mp3 file on SD card")); }
-    
-    // while sound is playing, scroll the bus across the display
-    while (musicPlayer.playingMusic ) 
+    // Determine next Moover time
+    if ( daysNextMoover > 0 )
     {
-      for (int xpos = -27; xpos < 66; xpos++)
-      {
-        matrix.fillScreen(0);  // fill the screen with 'black'
-        matrix.drawBitmap(xpos++, 0, moover, 32, 16, matrix.Color333(7,4,0) ); // draw bus
-        delay(scrollDelay);
-      }
-    }  // end while playing loop
-  } // end with sound
-  else
-  // don't play sound, only display bus scrolling on screen
-  {
-    for (int xpos = -27; xpos < 66; xpos++)
-    {
-      matrix.fillScreen(0);  // fill the screen with 'black'
-      matrix.drawBitmap(xpos++, 0, moover, 32, 16, matrix.Color333(7,4,0) ); // draw bus
-      delay(scrollDelay);
+      // Next is sometime after today
+      Serial.print(F("Day to next moover: "));
+      Serial.println(daysNextMoover);
+      return setUnixTime(6, 50) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
     }
-  }      
-  
-  musicPlayer.setVolume(255,255); // 255 turns volume off
-  
-}  // end displayBus()
+    else if ( decimalHour <= (6 + 50.0/60.0) )
+    {
+      // Early morning, next Moover at 6:50 AM
+      Serial.print(F("Early Morning  "));
+      return setUnixTime(6, 50); 
+    }
+    else if ( decimalHour <= (11 + 20.0/60.0) )
+    {
+      Serial.print(F("Morning Schedule  "));
+      if (now.minute() < 20)
+      {  return setUnixTime(now.hour(), 20); } // Next Moover time is 20 minutes past current hour
+       else if (now.minute() < 50)
+      { return setUnixTime(now.hour(), 50); } // Next Moover time is 50 minutes past the current hour
+      else if (now.minute() >= 50)
+      {  return setUnixTime(now.hour()+1, 20); } // Next Moover time is 20 minutes past the next hour
+    }  // end morning schedule
+    else
+    {
+      // Afternoon schedule, Moover leaves Mount Snow on the every half hour on the half hour, but it varies when it arrives 
+      // assume it will arrive at 15 & 45 minutes past the hour
+      Serial.print(F("Afternoon Schedule  "));
+      if ( decimalHour < (12 + 15.0/60.0) )
+      { return setUnixTime(12, 15); }  // Next moover is at 12:15 
+      else
+      {
+        if (now.minute() < 15)
+        {  return setUnixTime(now.hour(), 15); } // Next Moover time is 15 minutes past current hour
+         else if (now.minute() < 45)
+        { return setUnixTime(now.hour(), 45); } // Next Moover time is 5045 minutes past the current hour
+        else if (now.minute() >= 45)
+        {  return setUnixTime(now.hour()+1, 15); } // Next Moover time is 15 minutes past the next hour
+      }
+    } // End afternoon schedule
 
-// Play two minute warning sound
-void playTwoMinWarning(time_t nextMooverTime)
+
+} // nextMoover()
+
+time_t setUnixTime(int hour, int min)
 {
-
-  int volLevel = analogRead(VOLUMEPIN) / 11;
-  musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
-
-  // Start playing a file
-  // File names should be < 8 characters  
-  if (! musicPlayer.startPlayingFile("twomin1.mp3"))
-  { Serial.println(F("Could not open mp3 file on SD card")); }
-
-  // while sound is playing, scroll the bus across the display
-  while (musicPlayer.playingMusic )
-  {
-    // Display time
-    displayCountdown(nextMooverTime); // display countdown timer
-    delay(100);
-  }
-
-  musicPlayer.setVolume(255,255); // 255 turns volume off
-
-} // playTwoMinWarning()
+  DateTime now = RTC.now();
+  tm.Second = 0; 
+  tm.Minute = min;
+  tm.Hour = hour;
+  tm.Day = now.day();
+  tm.Month = now.month();
+  tm.Year = now.year() - 1970;
+  return  makeTime(tm);  
+}  // end setUnixTime()
 
 
 // Retuns number of days until the next time Moover comes
@@ -480,6 +287,7 @@ void playTwoMinWarning(time_t nextMooverTime)
 int daysUntilNextMoover()
 {
   DateTime now = RTC.now();
+  float decimalHour = (float)now.hour() + (float)now.minute()/60.0 + (float)now.second()/3600.0;
   
   int seasonEndYear = now.year();
   if ( now.month() >= 10 )
@@ -492,19 +300,19 @@ int daysUntilNextMoover()
   // Check if today is a Saturday 
   if ( now.dayOfWeek2() == DOW_SAT )
   {
-    if ( now.hour() < 17 )
+    if ( decimalHour <= LASTMOOVER) // 5:15 PM
     { return 0; } // Moover runs today
     else
-    { return 1; } // It's after 5PM, Moover runs tomorrow
+    { return 1; } // It's after 5:15 PM, Moover runs tomorrow
   }  
 
-  // Check if today is a Sunday  and time is < 5 PM
-  if ( now.dayOfWeek2() == DOW_SUN && now.hour() < 17)
+  // Check if today is a Sunday and time is < 5:15 PM
+  if ( now.dayOfWeek2() == DOW_SUN && decimalHour <= LASTMOOVER )
   { return 0; } // Moover runs today
 
   // see if any days in the next 5 are a holiday
   int d = 0;
-  if (now.hour() >= 17) // if it's after 5PM, don't including today
+  if ( decimalHour > LASTMOOVER) // if it's after 5PM, don't including today
   { d = 1; }
   for (d; d < 5; d++)
   {
@@ -519,7 +327,7 @@ int daysUntilNextMoover()
   }
 
   // If today is Sunday after 5PM, return next Saturday
-  if (now.dayOfWeek2() == 7 && now.hour() >= 17)
+  if (now.dayOfWeek2() == 7 && decimalHour > LASTMOOVER)
   { return 6; }
 
   // Next Moover is next Saturday
@@ -729,3 +537,166 @@ time_t convertDay(int y, int m, int d)
   tm.Year = y - 1970;
   return makeTime(tm);
 } // end convertDay()
+
+
+void displayCountdown(time_t nextMooverTime)
+{
+  char countdownbuf[30]; 
+  const byte countdnStartPos = 12;
+  byte highHrsPosOffset; // If hours are over 100, then you need to change house starting column
+  DateTime now = RTC.now();
+
+  uint32_t countDownTime = nextMooverTime - now.unixtime();
+  moover_sec = countDownTime % 60; // get seconds
+  countDownTime /= 60; // convert to minutes
+  moover_min = countDownTime % 60; // get minutes
+  countDownTime /= 60; // convert to hours
+  moover_hrs = countDownTime; // get hours
+
+  sprintf(countdownbuf, "Countdown: %02d:%02d:%02d    ", moover_hrs, moover_min, moover_sec);
+  Serial.print(countdownbuf);
+  sprintf(countdownbuf, "Time: %d/%d/%d %02d:%02d:%02d", now.month(), now.day(), now.year(), now.hour(), now.minute(), now.second());
+  Serial.println(countdownbuf);
+ 
+  
+  matrix.setCursor(14, 0);   
+  matrix.print("Moover");
+  
+  // display hours
+  if ( moover_hrs != moover_hrs_prev)
+  {
+    // Delete old hours digits
+    matrix.setTextColor(0);  
+    if ( moover_hrs_prev > 99 )
+    { highHrsPosOffset = 5; }
+    else
+    { highHrsPosOffset = 0; }
+    if (moover_hrs_prev % 10 == 1 )  // If right digit is a 1, then move hours to the right 1 row
+    { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset, 9); }  
+    else
+    { matrix.setCursor(countdnStartPos - highHrsPosOffset, 9); }
+    sprintf(countdownbuf, "%02d", moover_hrs_prev);
+    matrix.print(countdownbuf);
+
+    // display new hour
+    if ( moover_hrs > 99 )
+    { highHrsPosOffset = 5; }
+    else
+    { highHrsPosOffset = 0; }
+    matrix.setTextColor(matrix.Color333(0,7,0));  
+    if (moover_hrs % 10 == 1)    // If right digit is a 1, then move hours to the right 1 row
+    { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset , 9); }  
+    else
+    { matrix.setCursor(countdnStartPos - highHrsPosOffset, 9); }
+    sprintf(countdownbuf, "%02d", moover_hrs);
+    matrix.print(countdownbuf);
+  }
+
+  matrix.setCursor(countdnStartPos + 10, 9);   
+  matrix.print(":");
+  
+  // display minutes
+  if ( moover_min != moover_min_prev)
+  {
+    // Delete old minutes digits
+    matrix.setTextColor(0);  
+    matrix.setCursor(countdnStartPos + 14, 9);   
+    sprintf(countdownbuf, "%02d", moover_min_prev);
+    matrix.print(countdownbuf);
+    
+    // display new mintues
+    matrix.setTextColor(matrix.Color333(0,7,0));  
+    matrix.setCursor(countdnStartPos + 14, 9);   
+    sprintf(countdownbuf, "%02d", moover_min);
+    matrix.print(countdownbuf);
+  }
+  
+  matrix.setCursor(countdnStartPos + 24, 9);   
+  matrix.print(":");
+
+  // delete old seconds digits
+  matrix.setTextColor(0);  
+  matrix.setCursor(countdnStartPos + 28, 9);   
+  sprintf(countdownbuf, "%02d", moover_sec_prev);
+  matrix.print(countdownbuf);
+  
+  // display new seconds
+  matrix.setTextColor(matrix.Color333(0,7,0));  
+  matrix.setCursor(countdnStartPos + 28, 9);   
+  sprintf(countdownbuf, "%02d", moover_sec);
+  matrix.print(countdownbuf);
+
+  moover_hrs_prev = moover_hrs;
+  moover_min_prev = moover_min;
+  moover_sec_prev = moover_sec;
+  
+}  // end displayCountdown()
+
+
+// Start bus scrolling across the screen and play moover sound
+void displayBus(bool withSound)
+{
+  int scrollDelay = 120;
+  
+  if (withSound) 
+  {
+    int volLevel = analogRead(VOLUMEPIN) / 11;
+    musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
+    
+    // Start playing a file, then we can do stuff while waiting for it to finish
+    // File names should be < 8 characters
+    // moover1.mp3 is cow sound, arrive2x.mp3 is woman announcing moover
+    if (! musicPlayer.startPlayingFile("arrive2x.mp3")) 
+    { Serial.println(F("Could not open mp3 file on SD card")); }
+    
+    // while sound is playing, scroll the bus across the display
+    while (musicPlayer.playingMusic ) 
+    {
+      for (int xpos = -27; xpos < 66; xpos++)
+      {
+        matrix.fillScreen(0);  // fill the screen with 'black'
+        matrix.drawBitmap(xpos++, 0, moover, 32, 16, matrix.Color333(7,4,0) ); // draw bus
+        delay(scrollDelay);
+      }
+    }  // end while playing loop
+  } // end with sound
+  else
+  // don't play sound, only display bus scrolling on screen
+  {
+    for (int xpos = -27; xpos < 66; xpos++)
+    {
+      matrix.fillScreen(0);  // fill the screen with 'black'
+      matrix.drawBitmap(xpos++, 0, moover, 32, 16, matrix.Color333(7,4,0) ); // draw bus
+      delay(scrollDelay);
+    }
+  }      
+  
+  musicPlayer.setVolume(255,255); // 255 turns volume off
+  
+}  // end displayBus()
+
+// Play two minute warning sound
+void playTwoMinWarning(time_t nextMooverTime)
+{
+
+  int volLevel = analogRead(VOLUMEPIN) / 11;
+  musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
+
+  // Start playing a file
+  // File names should be < 8 characters  
+  if (! musicPlayer.startPlayingFile("twomin1.mp3"))
+  { Serial.println(F("Could not open mp3 file on SD card")); }
+
+  // while sound is playing, scroll the bus across the display
+  while (musicPlayer.playingMusic )
+  {
+    // Display time
+    displayCountdown(nextMooverTime); // display countdown timer
+    delay(100);
+  }
+
+  musicPlayer.setVolume(255,255); // 255 turns volume off
+
+} // playTwoMinWarning()
+
+
