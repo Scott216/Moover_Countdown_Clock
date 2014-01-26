@@ -55,12 +55,13 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #include <Adafruit_GFX.h>    // http://github.com/adafruit/Adafruit-GFX-Library
 #include <RGBmatrixPanel.h>  // http://github.com/protonmaster/RGB-matrix-Panel
 #include <Wire.h>            // http://arduino.cc/en/reference/wire
-#include "RTClib.h"          // http://github.com/adafruit/RTClib  (renamed dayOfWeek to dayofWeek2)
-#include "Time.h"            // http://www.pjrc.com/teensy/td_libs_Time.html
+#include <RTClib.h>          // http://github.com/adafruit/RTClib  (renamed dayOfWeek to dayofWeek2)
+#include <Time.h>            // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <SPI.h>             // http://arduino.cc/en/Reference/SPI
 #include <Adafruit_VS1053.h> // http://github.com/adafruit/Adafruit_VS1053_Library
 #include <SD.h>              // http://arduino.cc/en/Reference/SD   
                              // http://github.com/arduino/Arduino/tree/master/libraries/SD
+#include "Moover_Clock_Library.h"
 
 
 #define UNIXDAY 86400 // seconds in one day
@@ -139,6 +140,9 @@ time_t mlk(int yr);
 time_t president(int yr);
 time_t daylightNov(int yr);
 time_t daylightMar(int yr);
+time_t nextMoover();
+bool checkDaylightSavings(DateTime now);
+time_t setUnixTime(int hour, int min);
 
 
 void setup()

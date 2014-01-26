@@ -1,5 +1,5 @@
 To Do:
-Use daylight savings routines to automatically adjust clock
+
 
 
 Wiring display to Mega Pro
