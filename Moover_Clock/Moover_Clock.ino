@@ -61,7 +61,6 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #include <Adafruit_VS1053.h> // http://github.com/adafruit/Adafruit_VS1053_Library
 #include <SD.h>              // http://arduino.cc/en/Reference/SD   
                              // http://github.com/arduino/Arduino/tree/master/libraries/SD
-#include "Moover_Clock_Library.h"
 
 
 #define UNIXDAY 86400 // seconds in one day
@@ -95,7 +94,7 @@ RTC_DS1307 RTC;
 Adafruit_VS1053_FilePlayer musicPlayer = Adafruit_VS1053_FilePlayer(RESET, VS1053CS, DCS, DREQ, SDCARDCS);
 
 
-
+// This is a bitmap for the shape of the bus which will scroll across the screen
 static unsigned char PROGMEM moover[] = {
   B01111111, B11111111, B11111100, B00000000,
   B10100010, B10001010, B00100010, B00000000,
@@ -126,7 +125,6 @@ int moover_sec_prev = -1;
 uint32_t refreshTimer; // time to update the display  
  
 tmElements_t tm;
-
 
 // Function Prototypes
 void displayCountdown(time_t nextMooverTime);
@@ -181,7 +179,7 @@ void setup()
   if (!RTC.isrunning()) 
   { Serial.println(F("RTC is NOT running!")); }
   
-//  RTC.adjust(DateTime(__DATE__, __TIME__));
+//  RTC.adjust(DateTime(__DATE__, __TIME__));        // Will set the RTC clock to the time when program was compiled
 //  RTC.adjust(DateTime(2014, 1, 18, 17, 14, 56 ));  // use for debugging
 
   refreshTimer = millis();  // Initialize display refresh timer
@@ -269,7 +267,6 @@ time_t nextMoover()
         {  return setUnixTime(now.hour()+1, 15); } // Next Moover time is 15 minutes past the next hour
       }
     } // End afternoon schedule
-
 
 } // nextMoover()
 
@@ -365,8 +362,7 @@ bool isHoliday(time_t checkDate)
 }  // end isHoliday()
 
 
-// Return Thanksgiving date
-// 4th Thursday in November
+// Return Thanksgiving date (4th Thursday in November)
 time_t thanksgiving(int yr)
 {
   time_t t;
@@ -391,8 +387,7 @@ time_t thanksgiving(int yr)
 } // end thanksgiving()
 
 
-// Return MLK Day date
-// 3rd Monday in January
+// Return MLK Day date (3rd Monday in January)
 time_t mlk(int yr)
 {
   time_t t;
@@ -417,8 +412,7 @@ time_t mlk(int yr)
 } // end mlk()
 
 
-// Return President's Day Day date
-// 3rd Monday in February
+// Return President's Day Day date (3rd Monday in February)
 time_t president(int yr)
 {
   time_t t;
@@ -441,6 +435,7 @@ time_t president(int yr)
     }
   } 
 } // end president()
+
 
 // Chack and adjust time for daylight savings
 bool checkDaylightSavings(DateTime now)
@@ -477,8 +472,7 @@ bool checkDaylightSavings(DateTime now)
 }  // checkDaylightSavings
 
 
-// Return November Daylight savings
-// 1st Sunday in November, 2 AM
+// Return November Daylight savings (1st Sunday in November, 2 AM)
 time_t daylightNov(int yr)
 {
   time_t t;
@@ -503,8 +497,7 @@ time_t daylightNov(int yr)
 } // end daylightNov()
 
 
-// Return March Daylight savings
-// 2nd Sunday in March, 2 AM
+// Return March Daylight savings (2nd Sunday in March, 2 AM)
 time_t daylightMar(int yr)
 {
   time_t t;
@@ -543,6 +536,7 @@ time_t convertDay(int y, int m, int d)
 } // end convertDay()
 
 
+// Displays the countdown time in the LED matrix
 void displayCountdown(time_t nextMooverTime)
 {
   char countdownbuf[30]; 
@@ -637,7 +631,7 @@ void displayCountdown(time_t nextMooverTime)
 }  // end displayCountdown()
 
 
-// Start bus scrolling across the screen and play moover sound
+// Start bus scrolling across the screen and plays sound
 void displayBus(bool withSound)
 {
   int scrollDelay = 120;
@@ -678,6 +672,7 @@ void displayBus(bool withSound)
   musicPlayer.setVolume(255,255); // 255 turns volume off
   
 }  // end displayBus()
+
 
 // Play two minute warning sound
 void playTwoMinWarning(time_t nextMooverTime)
