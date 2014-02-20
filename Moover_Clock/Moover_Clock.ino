@@ -42,7 +42,7 @@ Hardware:
 Mega Pro http://www.sparkfun.com/products/11007
 LED Matrix Displays  http://www.adafruit.com/products/420
 VS1053 audio board http://www.adafruit.com/products/1381
-2.8 wattt Amp http://www.adafruit.com/products/1552  
+2.8 wattt Amp http://www.adafruit.com/products/1552 schematic: http://www.adafruit.com/datasheets/TS2012sch.png
 RTC http://www.adafruit.com/products/255
 
 Forum posts:
@@ -58,7 +58,7 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #include <RTClib.h>          // http://github.com/adafruit/RTClib  (renamed dayOfWeek to dayofWeek2)
 #include <Time.h>            // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <SPI.h>             // http://arduino.cc/en/Reference/SPI
-#include <Adafruit_VS1053.h> // http://github.com/adafruit/Adafruit_VS1053_Library
+#include <Adafruit_VS1053.h> // http://github.com/adafruit/Adafruit_VS1053_Library   MP# audio board
 #include <SD.h>              // http://arduino.cc/en/Reference/SD   
                              // http://github.com/arduino/Arduino/tree/master/libraries/SD
 
@@ -74,9 +74,11 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #define B   32 
 #define C   34 
 #define LAT 36 
+#define CLEAR_DISP 0
 
 #define DOUBLEBUFFER false  // When true increases refresh rate so there is no flickering. But in this sketch, display is blank when true
 #define NUMDISPLAYS 2
+enum colorme_t { COLOR_BUS, COLOR_COUNTDOWN, COLOR_TIME };
 
 const float LASTMOOVER = 17.25; 
 
@@ -87,7 +89,8 @@ const float LASTMOOVER = 17.25;
 #define DCS       8   // VS1053 Data/command select pin (output)
 #define RESET     9   // VS1053 reset pin (output)
 
-#define VOLUMEPIN 0   // Analog input for volume adjustment
+#define VOLUMEPIN 0      // Analog input for volume adjustment
+#define DISABLE_AUDIO 43 // Use to shut off amp (to prevent humming) - low signal will shuts it down
 
 RGBmatrixPanel matrix(A, B, C, CLK, LAT, OE, DOUBLEBUFFER, NUMDISPLAYS);
 RTC_DS1307 RTC;
@@ -122,16 +125,17 @@ int moover_hrs_prev = -1; // set default to -1 so time will not equal anything r
 int moover_min_prev = -1;
 int moover_sec_prev = -1;
 
-uint32_t refreshTimer; // time to update the display  
  
 tmElements_t tm;
 
 // Function Prototypes
 void displayCountdown(time_t nextMooverTime);
+void displayCurrentTime(unsigned int secondsToDisplay);
 void displayBus(bool withSound);
 void playTwoMinWarning(time_t nextMooverTime);
 time_t convertDay(int y, int m, int d);
 int daysUntilNextMoover();
+uint16_t setDisplayColor(colorme_t colorme);
 bool isHoliday(time_t checkDate);
 time_t thanksgiving(int yr);
 time_t mlk(int yr);
@@ -146,15 +150,15 @@ time_t setUnixTime(int hour, int min);
 void setup()
 {
   Serial.begin(9600);
-  Serial.println(F("Moover Clock Setup"));
   matrix.begin();  // initialize display
   
+  pinMode(DISABLE_AUDIO, OUTPUT);
   
   // Initialize the music player
   if (musicPlayer.begin()) 
   {
     musicPlayer.sineTest(0x44, 500);  // Make a tone to indicate VS1053 is working, this resets the volume, so use it before setVolume
-    musicPlayer.setVolume(255,255);     // Set volume to zero
+    setSpeakerVolume(255);     // turn off speaker
     if (! musicPlayer.useInterrupt(VS1053_FILEPLAYER_PIN_INT))  // do not remove
     { Serial.println(F("DREQ pin is not an interrupt pin")); }
   }
@@ -170,8 +174,8 @@ void setup()
 
   // Set text size and color
   matrix.setTextSize(1);    // size 1 == 8 pixels high
-  matrix.setTextColor(matrix.Color333(0,7,0));
-  matrix.fillScreen(matrix.Color333(0, 0, 0)); // clear screen
+  matrix.setTextColor(setDisplayColor(COLOR_COUNTDOWN));
+  matrix.fillScreen(CLEAR_DISP); 
  
   // Start communication to clock
   Wire.begin();
@@ -180,21 +184,23 @@ void setup()
   { Serial.println(F("RTC is NOT running!")); }
   
 //  RTC.adjust(DateTime(__DATE__, __TIME__));        // Will set the RTC clock to the time when program was compiled
-//  RTC.adjust(DateTime(2014, 1, 18, 17, 14, 56 ));  // use for debugging
+//  RTC.adjust(DateTime(2014, 2, 19, 7, 49, 50 ));  // use for debugging
 
-  refreshTimer = millis();  // Initialize display refresh timer
+  Serial.println(F("Moover Clock Setup"));
 
 } // end setup()
 
 
 void loop() 
 {
+  static uint32_t updateMooverTimer = millis(); // time to update the display  
   DateTime now = RTC.now();
-
-  if ((long) (millis() - refreshTimer) > 0 )
+  bool isDaytime = (now.hour() >= 4 && now.hour() <= 17); 
+  // display Moover countdown 
+  if ((long) (millis() - updateMooverTimer) > 0 && isDaytime ) 
   {
     displayCountdown( nextMoover() ); // display countdown timer
-    refreshTimer = millis() + 500;    // update display every 1/2 second
+    updateMooverTimer = millis() + 500;    // update display every 1/2 second
 
     // Play 2 minute warning, in the morning only
     if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 0 && now.hour() < 12 )
@@ -211,7 +217,22 @@ void loop()
       moover_hrs_prev = -1;  // forces hours to refresh in display
     }
     checkDaylightSavings(now); 
-  }  // refresh
+  }  // refresh moover countdown
+
+
+  // show time if showCurrentTimeTimer has expired and moover is not due in the next 2ish minutes (125 seconds)
+  static uint32_t showCurrentTimeTimer = millis() + 5000UL;  // initialize timer 
+  bool isMoverComingSoon =  (nextMoover() - now.unixtime()) < 125;
+  if ((long) (millis() - showCurrentTimeTimer) > 0 && !isMoverComingSoon )
+  {
+    displayCurrentTime(3000); // display time for 3 seconds
+    showCurrentTimeTimer = millis() + 5000UL; // show again in 5 seconds
+    moover_hrs_prev = -1;  // forces hours to refresh in display
+    moover_min_prev = -1;  // forces minutes to refresh in display
+    // If daytime, clear dispaly for countdown timer
+    if ( now.hour() <= 17 )
+    {  matrix.fillScreen(CLEAR_DISP); }
+  }
 
 }  // end loop()
 
@@ -222,7 +243,6 @@ time_t nextMoover()
 
     // Calculate days until next time Moover will come.  Zero if Moover is running today
     int daysNextMoover = daysUntilNextMoover();
-    Serial.print("Days to next moover "); Serial.println(daysNextMoover );  // srg debug
     
     float decimalHour = (float)now.hour() + (float)now.minute()/60.0 + (float)now.second()/3600.0;
 
@@ -230,19 +250,15 @@ time_t nextMoover()
     if ( daysNextMoover > 0 )
     {
       // Next is sometime after today
-      Serial.print(F("Day to next moover: "));
-      Serial.println(daysNextMoover);
       return setUnixTime(6, 50) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
     }
     else if ( decimalHour <= (6 + 50.0/60.0) )
     {
       // Early morning, next Moover at 6:50 AM
-      Serial.print(F("Early Morning  "));
       return setUnixTime(6, 50); 
     }
     else if ( decimalHour <= (11 + 20.0/60.0) )
     {
-      Serial.print(F("Morning Schedule  "));
       if (now.minute() < 20)
       {  return setUnixTime(now.hour(), 20); } // Next Moover time is 20 minutes past current hour
        else if (now.minute() < 50)
@@ -254,7 +270,6 @@ time_t nextMoover()
     {
       // Afternoon schedule, Moover leaves Mount Snow on the every half hour on the half hour, but it varies when it arrives 
       // assume it will arrive at 15 & 45 minutes past the hour
-      Serial.print(F("Afternoon Schedule  "));
       if ( decimalHour < (12 + 15.0/60.0) )
       { return setUnixTime(12, 15); }  // Next moover is at 12:15 
       else
@@ -294,7 +309,7 @@ int daysUntilNextMoover()
   if ( now.month() >= 10 )
   { seasonEndYear++; } // It's still start of season, season end year is next year 
   
-  // If it's off seasion return 2 days after Thanksgiving
+  // If it's off-seasion return 2 days after Thanksgiving
   if ( now.unixtime() < thanksgiving(now.year()) && now.unixtime() > convertDay(now.year(), 4, 16))
   { return  ((thanksgiving(now.year()) + 2UL * UNIXDAY ) - now.unixtime() ) / UNIXDAY; }
 
@@ -551,12 +566,12 @@ void displayCountdown(time_t nextMooverTime)
   countDownTime /= 60; // convert to hours
   moover_hrs = countDownTime; // get hours
 
-  sprintf(countdownbuf, "Countdown: %02d:%02d:%02d    ", moover_hrs, moover_min, moover_sec);
-  Serial.print(countdownbuf);
-  sprintf(countdownbuf, "Time: %d/%d/%d %02d:%02d:%02d", now.month(), now.day(), now.year(), now.hour(), now.minute(), now.second());
-  Serial.println(countdownbuf);
- 
-  
+//  sprintf(countdownbuf, "Countdown: %02d:%02d:%02d    ", moover_hrs, moover_min, moover_sec);
+//  Serial.print(countdownbuf);
+//  sprintf(countdownbuf, "Time: %d/%d/%d %02d:%02d:%02d", now.month(), now.day(), now.year(), now.hour(), now.minute(), now.second());
+//  Serial.println(countdownbuf);
+
+  matrix.setTextColor(setDisplayColor(COLOR_COUNTDOWN));
   matrix.setCursor(14, 0);   
   matrix.print("Moover");
   
@@ -581,7 +596,7 @@ void displayCountdown(time_t nextMooverTime)
     { highHrsPosOffset = 5; }
     else
     { highHrsPosOffset = 0; }
-    matrix.setTextColor(matrix.Color333(0,7,0));  
+    matrix.setTextColor(setDisplayColor(COLOR_COUNTDOWN));  
     if (moover_hrs % 10 == 1)    // If right digit is a 1, then move hours to the right 1 row
     { matrix.setCursor(countdnStartPos + 1 - highHrsPosOffset , 9); }  
     else
@@ -603,7 +618,7 @@ void displayCountdown(time_t nextMooverTime)
     matrix.print(countdownbuf);
     
     // display new mintues
-    matrix.setTextColor(matrix.Color333(0,7,0));  
+    matrix.setTextColor(setDisplayColor(COLOR_COUNTDOWN));  
     matrix.setCursor(countdnStartPos + 14, 9);   
     sprintf(countdownbuf, "%02d", moover_min);
     matrix.print(countdownbuf);
@@ -619,7 +634,7 @@ void displayCountdown(time_t nextMooverTime)
   matrix.print(countdownbuf);
   
   // display new seconds
-  matrix.setTextColor(matrix.Color333(0,7,0));  
+  matrix.setTextColor(setDisplayColor(COLOR_COUNTDOWN));  
   matrix.setCursor(countdnStartPos + 28, 9);   
   sprintf(countdownbuf, "%02d", moover_sec);
   matrix.print(countdownbuf);
@@ -631,6 +646,33 @@ void displayCountdown(time_t nextMooverTime)
 }  // end displayCountdown()
 
 
+void displayCurrentTime(unsigned int secondsToDisplay)
+{
+  DateTime now = RTC.now();
+  
+  char dispbuf[30];
+  int hour12; 
+  if (now.hour() == 0 )
+  { hour12 = 12; }
+  else if (now.hour() > 12 )
+  { hour12 = now.hour() - 12; }
+  else
+  { hour12 = now.hour(); }
+  sprintf(dispbuf, "%d:%02d", hour12, now.minute());
+
+  int xPos;
+  (hour12 >= 10) ? xPos = 17 : xPos = 20;
+  matrix.fillScreen(CLEAR_DISP);
+  matrix.setTextColor(setDisplayColor(COLOR_TIME)); 
+  matrix.setCursor(20, 0); 
+  matrix.print("Time");
+  matrix.setCursor(xPos, 8); 
+  matrix.print(dispbuf);
+  
+  delay(secondsToDisplay);
+} // end displayCurrentTime()
+
+
 // Start bus scrolling across the screen and plays sound
 void displayBus(bool withSound)
 {
@@ -638,8 +680,7 @@ void displayBus(bool withSound)
   
   if (withSound) 
   {
-    int volLevel = analogRead(VOLUMEPIN) / 11;
-    musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
+    setSpeakerVolume(analogRead(VOLUMEPIN) / 11);  // lower number is higher volume
     
     // Start playing a file, then we can do stuff while waiting for it to finish
     // File names should be < 8 characters
@@ -652,8 +693,8 @@ void displayBus(bool withSound)
     {
       for (int xpos = -27; xpos < 66; xpos++)
       {
-        matrix.fillScreen(0);  // fill the screen with 'black'
-        matrix.drawBitmap(xpos++, 0, moover, 32, 16, matrix.Color333(7,4,0) ); // draw bus
+        matrix.fillScreen(CLEAR_DISP); 
+        matrix.drawBitmap(xpos++, 0, moover, 32, 16, setDisplayColor(COLOR_BUS) ); // draw bus
         delay(scrollDelay);
       }
     }  // end while playing loop
@@ -663,23 +704,46 @@ void displayBus(bool withSound)
   {
     for (int xpos = -27; xpos < 66; xpos++)
     {
-      matrix.fillScreen(0);  // fill the screen with 'black'
-      matrix.drawBitmap(xpos++, 0, moover, 32, 16, matrix.Color333(7,4,0) ); // draw bus
+      matrix.fillScreen(CLEAR_DISP);  
+      matrix.drawBitmap(xpos++, 0, moover, 32, 16, setDisplayColor(COLOR_BUS) ); // draw bus
       delay(scrollDelay);
     }
   }      
   
-  musicPlayer.setVolume(255,255); // 255 turns volume off
+  setSpeakerVolume(255); // Turn speaker off
   
 }  // end displayBus()
+
+
+uint16_t setDisplayColor(colorme_t colorme)
+{
+  uint16_t returnColor;
+  
+  switch(colorme)
+  {  
+    case COLOR_BUS:
+      returnColor = matrix.Color333(7,4,0);
+      break;
+    case COLOR_COUNTDOWN:
+//      returnColor = matrix.Color333(0,7,0);
+      returnColor = matrix.Color333(3,3,0);
+      break;
+    case COLOR_TIME:
+      returnColor = matrix.Color333(3,3,0);
+      break;
+    default:
+      returnColor = matrix.Color333(6,0,0);
+      break;
+  }
+  return returnColor;
+}  // setDisplayColor()
 
 
 // Play two minute warning sound
 void playTwoMinWarning(time_t nextMooverTime)
 {
 
-  int volLevel = analogRead(VOLUMEPIN) / 11;
-  musicPlayer.setVolume(volLevel,volLevel);  // lower number is higher volume
+  setSpeakerVolume(analogRead(VOLUMEPIN) / 11);  // lower number is higher volume
 
   // Start playing a file
   // File names should be < 8 characters  
@@ -694,8 +758,25 @@ void playTwoMinWarning(time_t nextMooverTime)
     delay(100);
   }
 
-  musicPlayer.setVolume(255,255); // 255 turns volume off
+  setSpeakerVolume(255); // Turn speaker off
 
 } // playTwoMinWarning()
+
+// lower number is higher volume
+void setSpeakerVolume(byte volumeLevel)
+{
+  if ( volumeLevel == 255)
+  { // turn off speaker
+    musicPlayer.setVolume(255, 255);  
+    digitalWrite(DISABLE_AUDIO, LOW);  // disable audio amp
+  }
+  else
+  { // turn off speaker
+    musicPlayer.setVolume(volumeLevel, volumeLevel);  
+    digitalWrite(DISABLE_AUDIO, HIGH);  // enable audio amp
+  }
+  
+
+}
 
 
