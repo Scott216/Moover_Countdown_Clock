@@ -22,7 +22,7 @@ B    D32  Can be any pin
 C    D34  Can be any pin
 LAT  D36 aka ST.  Can be any pin
 
- 
+
 Wiring for Audio player
 D50 MISO
 D51 MOSI
@@ -32,6 +32,14 @@ D9  RST
 D8  XDCS
 D4  SD Card chip select
 D3  DREQ  Needs to be on an interrupt pin
+
+Wiring for Audio Amp
+VDD - Vcc on Mega
+GND - GND on Audio player
+SDL - D43 on Mega (disables amp)
+L- to AGND on Audio Player
+L= to Lout on Audio player
+
 
 http://learn.adafruit.com/adafruit-vs1053-mp3-aac-ogg-midi-wav-play-and-record-codec-tutorial/library-reference
 Adafruit_VS1053(uint8_t rst, uint8_t cs, uint8_t dcs, uint8_t dreq) 
@@ -50,6 +58,9 @@ Display doesn't work with SPI (SOLVED): http://forums.adafruit.com/viewtopic.php
 
 Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 
+Version
+v1.50  Fixed daylight saving, fixed couple small bugs 
+ 
 */
 
 #include <Adafruit_GFX.h>    // http://github.com/adafruit/Adafruit-GFX-Library
@@ -62,6 +73,7 @@ Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 #include <SD.h>              // http://arduino.cc/en/Reference/SD   
                              // http://github.com/arduino/Arduino/tree/master/libraries/SD
 
+#define VERSION 1.50
 
 #define UNIXDAY 86400 // seconds in one day
 #define DOW_SAT 6     // Returned by now.dayOfWeek2()
@@ -145,7 +157,7 @@ time_t daylightMar(int yr);
 time_t nextMoover();
 bool checkDaylightSavings(DateTime now);
 time_t setUnixTime(int hour, int min);
-
+void setSpeakerVolume(byte volumeLevel);
 
 void setup()
 {
@@ -184,9 +196,15 @@ void setup()
   { Serial.println(F("RTC is NOT running!")); }
   
 //  RTC.adjust(DateTime(__DATE__, __TIME__));        // Will set the RTC clock to the time when program was compiled
-//  RTC.adjust(DateTime(2014, 2, 19, 7, 49, 50 ));  // use for debugging
+//  RTC.adjust(DateTime(2014, 3, 9, 1, 59, 50 ));  // use for debugging
 
-  Serial.println(F("Moover Clock Setup"));
+  Serial.print(F("Moover Clock Setup v"));
+  Serial.println(VERSION);
+  
+  char buf[20];
+  DateTime now = RTC.now();
+  sprintf(buf, "Time: %d/%d/%d %02d:%02d:%02d", now.month(), now.day(), now.year(), now.hour(), now.minute(), now.second());
+  Serial.println(buf);
 
 } // end setup()
 
@@ -207,16 +225,15 @@ void loop()
     { playTwoMinWarning( nextMoover() ); }
   
     // Countdown complete, display bus
-    if (  moover_hrs == 0 && moover_min == 0 && moover_sec == 1)
+    if (  moover_hrs == 0 && moover_min == 0 && moover_sec == 1 )
     {
       // only play sound in the morning
-      if (now.hour() < 12)
+      if ( now.hour() > 6 && now.hour() < 12 )
       { displayBus(true); } // show bus with sound
       else
       { displayBus(false); } // show bus without sound
       moover_hrs_prev = -1;  // forces hours to refresh in display
     }
-    checkDaylightSavings(now); 
   }  // refresh moover countdown
 
 
@@ -230,9 +247,11 @@ void loop()
     moover_hrs_prev = -1;  // forces hours to refresh in display
     moover_min_prev = -1;  // forces minutes to refresh in display
     // If daytime, clear dispaly for countdown timer
-    if ( now.hour() <= 17 )
+    if ( isDaytime )
     {  matrix.fillScreen(CLEAR_DISP); }
-  }
+  } 
+
+  checkDaylightSavings(now); 
 
 }  // end loop()
 
@@ -327,23 +346,24 @@ int daysUntilNextMoover()
   { return 0; } // Moover runs today
 
   // see if any days in the next 5 are a holiday
-  int d = 0;
+  int startday = 0;
   if ( decimalHour > LASTMOOVER) // if it's after 5PM, don't including today
-  { d = 1; }
-  for (d; d < 5; d++)
+  { startday = 1; }
+  
+  for (int d = startday; d < 5; d++)
   {
-  if ( isHoliday(now.unixtime() + UNIXDAY * d) )
+    if ( isHoliday(now.unixtime() + UNIXDAY * d) )
     { 
       // See if a Saturday is before the  holiday
       if ( ( 6 - now.dayOfWeek2()) < d )
-      { 6 - now.dayOfWeek2(); }  // Saturday comes first
+      { return 6 - now.dayOfWeek2(); }  // Saturday comes before holiday, so return that
       else
       { return d; }  // Holiday is next day Moover comes
     }
   }
 
   // If today is Sunday after 5PM, return next Saturday
-  if (now.dayOfWeek2() == 7 && decimalHour > LASTMOOVER)
+  if ( now.dayOfWeek2() == 7 && decimalHour > LASTMOOVER )
   { return 6; }
 
   // Next Moover is next Saturday
@@ -455,7 +475,6 @@ time_t president(int yr)
 // Chack and adjust time for daylight savings
 bool checkDaylightSavings(DateTime now)
 {
-  
   static bool daylightFlag; // prevents daylight savings from being adjusted more then once, really only an issue in November
   static byte lastHourChecked; // only check DLS once an hour
   
@@ -480,7 +499,7 @@ bool checkDaylightSavings(DateTime now)
   }
   
   if (now.hour() == 3)
-  { daylightFlag == false; } // Reset flag
+  { daylightFlag = false; } // Reset flag
   
   return false;  // didn't adjust time
   
@@ -533,7 +552,8 @@ time_t daylightMar(int yr)
       tm.Day = i + 7;  // found first Sunday, daylight saving is 2nd Sunday
       return makeTime(tm);
     }
-  } 
+  }
+  
 } // end daylightMar()
 
 
@@ -740,29 +760,29 @@ uint16_t setDisplayColor(colorme_t colorme)
 
 
 // Play two minute warning sound
+// Note: for some reason the display flickers when the sound is playing, even if I comment out displayCountdown()
 void playTwoMinWarning(time_t nextMooverTime)
 {
-
   setSpeakerVolume(analogRead(VOLUMEPIN) / 11);  // lower number is higher volume
 
-  // Start playing a file
+  // Start playing sound file
   // File names should be < 8 characters  
   if (! musicPlayer.startPlayingFile("twomin1.mp3"))
   { Serial.println(F("Could not open mp3 file on SD card")); }
 
-  // while sound is playing, scroll the bus across the display
+  // while sound is playing update the time
   while (musicPlayer.playingMusic )
   {
-    // Display time
-    displayCountdown(nextMooverTime); // display countdown timer
-    delay(100);
+    displayCountdown(nextMooverTime);  
+    delay(400);
   }
 
   setSpeakerVolume(255); // Turn speaker off
 
 } // playTwoMinWarning()
 
-// lower number is higher volume
+// 255 is lowest volume, zero is highest
+// There is hum when not playing anything, to avoid, disable audio amp
 void setSpeakerVolume(byte volumeLevel)
 {
   if ( volumeLevel == 255)
