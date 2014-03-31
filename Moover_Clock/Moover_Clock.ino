@@ -59,7 +59,7 @@ Display doesn't work with SPI (SOLVED): http://forums.adafruit.com/viewtopic.php
 Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 
 Version
-v1.50  Fixed daylight saving, fixed couple small bugs 
+1.5v0  Fixed daylight saving, fixed couple small bugs 
  
 */
 
