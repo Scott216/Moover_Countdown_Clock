@@ -59,8 +59,9 @@ Display doesn't work with SPI (SOLVED): http://forums.adafruit.com/viewtopic.php
 Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 
 Version
-1.5v0  Fixed daylight saving, fixed couple small bugs 
- 
+1.50  Fixed daylight saving, fixed couple small bugs 
+1.51  Set clock to not display countdown if season is over
+
 */
 
 #include <Adafruit_GFX.h>    // http://github.com/adafruit/Adafruit-GFX-Library
@@ -73,7 +74,7 @@ Version
 #include <SD.h>              // http://arduino.cc/en/Reference/SD   
                              // http://github.com/arduino/Arduino/tree/master/libraries/SD
 
-#define VERSION 1.50
+#define VERSION 1.51
 
 #define UNIXDAY 86400 // seconds in one day
 #define DOW_SAT 6     // Returned by now.dayOfWeek2()
@@ -196,7 +197,7 @@ void setup()
   { Serial.println(F("RTC is NOT running!")); }
   
 //  RTC.adjust(DateTime(__DATE__, __TIME__));        // Will set the RTC clock to the time when program was compiled
-//  RTC.adjust(DateTime(2014, 3, 9, 1, 59, 50 ));  // use for debugging
+//  RTC.adjust(DateTime(2014, 10, 15, 11, 30, 50 ));  // use for debugging
 
   Serial.print(F("Moover Clock Setup v"));
   Serial.println(VERSION);
@@ -214,8 +215,8 @@ void loop()
   static uint32_t updateMooverTimer = millis(); // time to update the display  
   DateTime now = RTC.now();
   bool isDaytime = (now.hour() >= 4 && now.hour() <= 17); 
-  // display Moover countdown 
-  if ((long) (millis() - updateMooverTimer) > 0 && isDaytime ) 
+  // display Moover countdown
+  if ((long) (millis() - updateMooverTimer) > 0 && isDaytime && daysUntilNextMoover() < 15 ) 
   {
     displayCountdown( nextMoover() ); // display countdown timer
     updateMooverTimer = millis() + 500;    // update display every 1/2 second
@@ -223,7 +224,7 @@ void loop()
     // Play 2 minute warning, in the morning only
     if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 0 && now.hour() < 12 )
     { playTwoMinWarning( nextMoover() ); }
-  
+
     // Countdown complete, display bus
     if (  moover_hrs == 0 && moover_min == 0 && moover_sec == 1 )
     {
@@ -237,7 +238,7 @@ void loop()
   }  // refresh moover countdown
 
 
-  // show time if showCurrentTimeTimer has expired and moover is not due in the next 2ish minutes (125 seconds)
+  // show time if showCurrentTimeTimer has expired and moover is not due in the next 125 seconds
   static uint32_t showCurrentTimeTimer = millis() + 5000UL;  // initialize timer 
   bool isMoverComingSoon =  (nextMoover() - now.unixtime()) < 125;
   if ((long) (millis() - showCurrentTimeTimer) > 0 && !isMoverComingSoon )
@@ -247,7 +248,7 @@ void loop()
     moover_hrs_prev = -1;  // forces hours to refresh in display
     moover_min_prev = -1;  // forces minutes to refresh in display
     // If daytime, clear dispaly for countdown timer
-    if ( isDaytime )
+    if ( isDaytime && daysUntilNextMoover() < 15 )
     {  matrix.fillScreen(CLEAR_DISP); }
   } 
 
@@ -268,7 +269,7 @@ time_t nextMoover()
     // Determine next Moover time
     if ( daysNextMoover > 0 )
     {
-      // Next is sometime after today
+      // Next Moover is after today
       return setUnixTime(6, 50) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
     }
     else if ( decimalHour <= (6 + 50.0/60.0) )
@@ -669,7 +670,7 @@ void displayCountdown(time_t nextMooverTime)
 void displayCurrentTime(unsigned int secondsToDisplay)
 {
   DateTime now = RTC.now();
-  
+
   char dispbuf[30];
   int hour12; 
   if (now.hour() == 0 )
@@ -688,7 +689,7 @@ void displayCurrentTime(unsigned int secondsToDisplay)
   matrix.print("Time");
   matrix.setCursor(xPos, 8); 
   matrix.print(dispbuf);
-  
+
   delay(secondsToDisplay);
 } // end displayCurrentTime()
 
