@@ -6,7 +6,11 @@ President's day is the 3rd Monday in February
 MLK is the third monday in January
 Thanksgiving is the 4th Thursday in November
 
-in RTClib.h I had to rename dayOfWeek to dayofWeek2 because of a conflict in time.h
+In RTClib.h I had to rename dayOfWeek to dayofWeek2 because of a conflict in time.h
+
+To Do:
+Add a countdown to the new year
+
 
 Mega Pin Wiring for Display, needs to be on Port A, pins 22-29.  D24-D29 are defined in library, don't try to change
 R1   D24  
@@ -55,14 +59,19 @@ RTC http://www.adafruit.com/products/255
 
 Forum posts:
 Display doesn't work with SPI (SOLVED): http://forums.adafruit.com/viewtopic.php?f=47&t=47537
-
+Tried SwapBuffers to see if it reduced flickr, but it didn't look any better. See post Adafruit forum post: http://bit.ly/1jKXVyF
 Text to speach: http://www.oddcast.com/home/demos/tts/tts_example.php
 
-Version
-1.50  Fixed daylight saving, fixed couple small bugs 
-1.51  Set clock to not display countdown if season is over
+Change Log:
+         v1.50   Fixed daylight saving, fixed couple small bugs
+         v1.51   Set clock to not display countdown if season is over
+11/08/14 v1.52   Clock didn't adjust for daylight savings time in Nov.  Changed DLS comparision to a 10 second window insetad of 1 second
+12/18/14 v1.53   Added return 0 to non-void functions to get rid of warning
+12/30/14 v1.54   Program was locking up because char buf[20]; was not long enough. I increased to 30
+01/01/14 v1.55   Changed holiday status.  On Thursday 1/1/15 clock was showing countdown to Saturday.  Added Happy New Year
 
 */
+#define VERSION "v1.55"
 
 #include <Adafruit_GFX.h>    // http://github.com/adafruit/Adafruit-GFX-Library
 #include <RGBmatrixPanel.h>  // http://github.com/protonmaster/RGB-matrix-Panel
@@ -74,7 +83,9 @@ Version
 #include <SD.h>              // http://arduino.cc/en/Reference/SD   
                              // http://github.com/arduino/Arduino/tree/master/libraries/SD
 
-#define VERSION 1.51
+// This gets rid of compiler warning: Only initialized variables can be placed into program memory area
+#undef PROGMEM
+#define PROGMEM __attribute__(( section(".progmem.data") ))
 
 #define UNIXDAY 86400 // seconds in one day
 #define DOW_SAT 6     // Returned by now.dayOfWeek2()
@@ -89,8 +100,9 @@ Version
 #define LAT 36 
 #define CLEAR_DISP 0
 
-#define DOUBLEBUFFER false  // When true increases refresh rate so there is no flickering. But in this sketch, display is blank when true
-#define NUMDISPLAYS 2
+const boolean DOUBLEBUFFER = false;  // When true increases refresh rate so there is no flickering.  Need to also use with swapBuffers().  Display looks better when this is false
+const int     NUMDISPLAYS =     2; 
+
 enum colorme_t { COLOR_BUS, COLOR_COUNTDOWN, COLOR_TIME };
 
 const float LASTMOOVER = 17.25; 
@@ -145,6 +157,7 @@ tmElements_t tm;
 void displayCountdown(time_t nextMooverTime);
 void displayCurrentTime(unsigned int secondsToDisplay);
 void displayBus(bool withSound);
+void displayHappyNewYear();
 void playTwoMinWarning(time_t nextMooverTime);
 time_t convertDay(int y, int m, int d);
 int daysUntilNextMoover();
@@ -163,6 +176,7 @@ void setSpeakerVolume(byte volumeLevel);
 void setup()
 {
   Serial.begin(9600);
+  delay(3000);
   matrix.begin();  // initialize display
   
   pinMode(DISABLE_AUDIO, OUTPUT);
@@ -184,25 +198,30 @@ void setup()
   else
   { Serial.println(F("SD failed, or not present")); }
 
-
   // Set text size and color
   matrix.setTextSize(1);    // size 1 == 8 pixels high
+  matrix.setTextWrap(false); // Allow text to run off right edge
   matrix.setTextColor(setDisplayColor(COLOR_COUNTDOWN));
   matrix.fillScreen(CLEAR_DISP); 
  
   // Start communication to clock
   Wire.begin();
   RTC.begin();
-  if (!RTC.isrunning()) 
+  if (RTC.isrunning()) 
+  { Serial.println(F("RTC is running!")); }
+  else
   { Serial.println(F("RTC is NOT running!")); }
   
-//  RTC.adjust(DateTime(__DATE__, __TIME__));        // Will set the RTC clock to the time when program was compiled
-//  RTC.adjust(DateTime(2014, 10, 15, 11, 30, 50 ));  // use for debugging
-
-  Serial.print(F("Moover Clock Setup v"));
+//  RTC.adjust(DateTime(__DATE__, __TIME__));       // Will set the RTC clock to the time when program was compiled
+//  RTC.adjust(DateTime(2014, 2, 8, 7, 49, 50 ));   // use for debugging, sets time to 10 seconds before moover comes
+//  RTC.adjust(DateTime(2014, 11, 2, 1, 59, 50 ));  // November Daylight Savings Test
+//  RTC.adjust(DateTime(2014, 3, 9, 1, 59, 50 ));   // March Daylight Savings Test
+//  RTC.adjust(DateTime(2014, 12, 31, 23, 59, 50 ));   // 10 seconds before new year
+  
+  Serial.print(F("Moover Clock Setup "));
   Serial.println(VERSION);
   
-  char buf[20];
+  char buf[30];
   DateTime now = RTC.now();
   sprintf(buf, "Time: %d/%d/%d %02d:%02d:%02d", now.month(), now.day(), now.year(), now.hour(), now.minute(), now.second());
   Serial.println(buf);
@@ -214,12 +233,22 @@ void loop()
 {
   static uint32_t updateMooverTimer = millis(); // time to update the display  
   DateTime now = RTC.now();
+  
+  // Check for New Years Eve, display "Happy New Year" for 3 minutes
+  bool showHappyNewYear = false; 
+  if (now.month() == 1 && now.day() == 1 && now.hour() == 0 && now.minute() < 3 )
+  { 
+    showHappyNewYear = true; 
+    displayHappyNewYear(); 
+  }
+
+  
   bool isDaytime = (now.hour() >= 4 && now.hour() <= 17); 
   // display Moover countdown
   if ((long) (millis() - updateMooverTimer) > 0 && isDaytime && daysUntilNextMoover() < 15 ) 
   {
-    displayCountdown( nextMoover() ); // display countdown timer
-    updateMooverTimer = millis() + 500;    // update display every 1/2 second
+    displayCountdown( nextMoover() );   // display countdown timer
+    updateMooverTimer = millis() + 500; // update display every 1/2 second
 
     // Play 2 minute warning, in the morning only
     if ( moover_hrs == 0 && moover_min == 2 && moover_sec == 0 && now.hour() < 12 )
@@ -241,7 +270,7 @@ void loop()
   // show time if showCurrentTimeTimer has expired and moover is not due in the next 125 seconds
   static uint32_t showCurrentTimeTimer = millis() + 5000UL;  // initialize timer 
   bool isMoverComingSoon =  (nextMoover() - now.unixtime()) < 125;
-  if ((long) (millis() - showCurrentTimeTimer) > 0 && !isMoverComingSoon )
+  if ((long) (millis() - showCurrentTimeTimer) > 0 && !isMoverComingSoon && !showHappyNewYear )
   {
     displayCurrentTime(3000); // display time for 3 seconds
     showCurrentTimeTimer = millis() + 5000UL; // show again in 5 seconds
@@ -259,50 +288,50 @@ void loop()
 
 time_t nextMoover()
 {
-    DateTime now = RTC.now();
+  DateTime now = RTC.now();
 
-    // Calculate days until next time Moover will come.  Zero if Moover is running today
-    int daysNextMoover = daysUntilNextMoover();
-    
-    float decimalHour = (float)now.hour() + (float)now.minute()/60.0 + (float)now.second()/3600.0;
+  // Calculate days until next time Moover will come.  Zero if Moover is running today
+  int daysNextMoover = daysUntilNextMoover();
+  
+  float decimalHour = (float)now.hour() + (float)now.minute()/60.0 + (float)now.second()/3600.0;
 
-    // Determine next Moover time
-    if ( daysNextMoover > 0 )
-    {
-      // Next Moover is after today
-      return setUnixTime(6, 50) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
-    }
-    else if ( decimalHour <= (6 + 50.0/60.0) )
-    {
-      // Early morning, next Moover at 6:50 AM
-      return setUnixTime(6, 50); 
-    }
-    else if ( decimalHour <= (11 + 20.0/60.0) )
-    {
-      if (now.minute() < 20)
-      {  return setUnixTime(now.hour(), 20); } // Next Moover time is 20 minutes past current hour
-       else if (now.minute() < 50)
-      { return setUnixTime(now.hour(), 50); } // Next Moover time is 50 minutes past the current hour
-      else if (now.minute() >= 50)
-      {  return setUnixTime(now.hour()+1, 20); } // Next Moover time is 20 minutes past the next hour
-    }  // end morning schedule
+  // Determine next Moover time
+  if ( daysNextMoover > 0 )
+  {
+    // Next Moover is after today
+    return setUnixTime(6, 50) + 24UL * 3600UL * (long) daysNextMoover;  // to deal with month rollover, it's easier to just add seconds to the time
+  }
+  else if ( decimalHour <= (6 + 50.0/60.0) )
+  {
+    // Early morning, next Moover at 6:50 AM
+    return setUnixTime(6, 50); 
+  }
+  else if ( decimalHour <= (11 + 20.0/60.0) )
+  {
+    if (now.minute() < 20)
+    {  return setUnixTime(now.hour(), 20); } // Next Moover time is 20 minutes past current hour
+     else if (now.minute() < 50)
+    { return setUnixTime(now.hour(), 50); } // Next Moover time is 50 minutes past the current hour
+    else if (now.minute() >= 50)
+    {  return setUnixTime(now.hour()+1, 20); } // Next Moover time is 20 minutes past the next hour
+  }  // end morning schedule
+  else
+  {
+    // Afternoon schedule, Moover leaves Mount Snow on the every half hour on the half hour, but it varies when it arrives 
+    // assume it will arrive at 15 & 45 minutes past the hour
+    if ( decimalHour < (12 + 15.0/60.0) )
+    { return setUnixTime(12, 15); }  // Next moover is at 12:15 
     else
     {
-      // Afternoon schedule, Moover leaves Mount Snow on the every half hour on the half hour, but it varies when it arrives 
-      // assume it will arrive at 15 & 45 minutes past the hour
-      if ( decimalHour < (12 + 15.0/60.0) )
-      { return setUnixTime(12, 15); }  // Next moover is at 12:15 
-      else
-      {
-        if (now.minute() < 15)
-        {  return setUnixTime(now.hour(), 15); } // Next Moover time is 15 minutes past current hour
-         else if (now.minute() < 45)
-        { return setUnixTime(now.hour(), 45); } // Next Moover time is 5045 minutes past the current hour
-        else if (now.minute() >= 45)
-        {  return setUnixTime(now.hour()+1, 15); } // Next Moover time is 15 minutes past the next hour
-      }
-    } // End afternoon schedule
-
+      if (now.minute() < 15)
+      {  return setUnixTime(now.hour(), 15); } // Next Moover time is 15 minutes past current hour
+       else if (now.minute() < 45)
+      { return setUnixTime(now.hour(), 45); } // Next Moover time is 5045 minutes past the current hour
+      else if (now.minute() >= 45)
+      {  return setUnixTime(now.hour()+1, 15); } // Next Moover time is 15 minutes past the next hour
+    }
+  } // End afternoon schedule
+  return 0;
 } // nextMoover()
 
 time_t setUnixTime(int hour, int min)
@@ -374,6 +403,7 @@ int daysUntilNextMoover()
 
 
 // Is today a holiday
+// Checks for MLK, President's week, Christmas break
 bool isHoliday(time_t checkDate)
 {
   time_t holiday;
@@ -383,14 +413,19 @@ bool isHoliday(time_t checkDate)
   if ( todayStart == holiday )
   { return true; }  // Today is MLK Day
   
-  // check for President's week
+  // Check for President's week
   holiday = president(year(checkDate));
-  if (todayStart >= holiday && todayStart <= (holiday + UNIXDAY * 5UL  ) )
+  if (todayStart >= holiday && todayStart <= (holiday + UNIXDAY * 5UL ) )
   { return true; }  // Today is President's week
   
-  // check for Chirsmas break, if day is between 12/27 and 1/1, return true 
-  holiday = convertDay(year(checkDate), 12, 27);
-  if (todayStart >= holiday && todayStart <= (holiday + UNIXDAY * 6UL) )
+  // check for Chirsmas break, if day is between Dec 27 and Jan 3, return true 
+  // Get the year.  If it just turned into a new year, use last year - 1
+  uint16_t getYear = year(checkDate);
+  if ( month(checkDate) == 1 && day(checkDate) < 10 )
+  { getYear = getYear - 1; }
+  
+  holiday = convertDay(getYear, 12, 27);
+  if (todayStart >= holiday && todayStart <= ( holiday + UNIXDAY * 6UL ) )
   { return true; }  // Today is Xmas break  
   
   return false; // today is not a holiday
@@ -419,7 +454,8 @@ time_t thanksgiving(int yr)
       tm.Day = i + 21;  // found first Thursday, Thanksgiving is 21 days later
       return makeTime(tm);
     }
-  } 
+  }
+  return 0;
 } // end thanksgiving()
 
 
@@ -444,7 +480,8 @@ time_t mlk(int yr)
       tm.Day = i + 14;  // found first Monday, MLK is 14 days later
       return makeTime(tm);
     }
-  } 
+  }
+  return 0;
 } // end mlk()
 
 
@@ -469,38 +506,42 @@ time_t president(int yr)
       tm.Day = i + 14;  // found first Monday, President's Day is 14 days later
       return makeTime(tm);
     }
-  } 
+  }
+  return 0;
 } // end president()
 
 
 // Chack and adjust time for daylight savings
 bool checkDaylightSavings(DateTime now)
 {
-  static bool daylightFlag; // prevents daylight savings from being adjusted more then once, really only an issue in November
+  static bool daylightFlag; // prevents daylight savings from being adjusted more then once, only need in November
   static byte lastHourChecked; // only check DLS once an hour
   
   if ( lastHourChecked == now.hour() )
   { return false; }; 
   lastHourChecked = now.hour();  // It's a new hour, reset variable and go on to check for daylight savings
   
-  if ( now.unixtime() == daylightMar(now.year()) && daylightFlag == false )
+  // Check time with +/- 5 second range
+  time_t dslMar = daylightMar(now.year());
+  if ( now.unixtime() > dslMar - 5 && now.unixtime() < dslMar + 5  )
   {
     RTC.adjust(now.unixtime() + 3600);  // Add an hour
-    daylightFlag = true; 
     Serial.println(F("Added 1 hour for dalylight savings"));
     return true;
   }
   
-  if ( now.unixtime() == daylightNov(now.year()) && daylightFlag == false )
+  // Check time with +/- 5 second range
+  time_t dslNov = daylightNov(now.year());
+  if ( (now.unixtime() > dslNov - 5 && now.unixtime() < dslNov + 5)  && daylightFlag == false )
   {
     RTC.adjust(now.unixtime() - 3600);  // Subtract an hour
     daylightFlag = true; 
     Serial.println(F("Subtracted 1 hour for dalylight savings"));
     return true;
   }
-  
+
   if (now.hour() == 3)
-  { daylightFlag = false; } // Reset flag
+  { daylightFlag = false; } // Reset flag at 3AM
   
   return false;  // didn't adjust time
   
@@ -528,7 +569,8 @@ time_t daylightNov(int yr)
       tm.Day = i;  // found first Sunday
       return makeTime(tm);
     }
-  } 
+  }
+  return 0;
 } // end daylightNov()
 
 
@@ -554,7 +596,7 @@ time_t daylightMar(int yr)
       return makeTime(tm);
     }
   }
-  
+  return 0;
 } // end daylightMar()
 
 
@@ -577,7 +619,7 @@ void displayCountdown(time_t nextMooverTime)
 {
   char countdownbuf[30]; 
   const byte countdnStartPos = 12;
-  byte highHrsPosOffset; // If hours are over 100, then you need to change house starting column
+  byte highHrsPosOffset; // If hours are over 100, then you need to change hours starting column
   DateTime now = RTC.now();
 
   uint32_t countDownTime = nextMooverTime - now.unixtime();
@@ -659,7 +701,7 @@ void displayCountdown(time_t nextMooverTime)
   matrix.setCursor(countdnStartPos + 28, 9);   
   sprintf(countdownbuf, "%02d", moover_sec);
   matrix.print(countdownbuf);
-
+  
   moover_hrs_prev = moover_hrs;
   moover_min_prev = moover_min;
   moover_sec_prev = moover_sec;
@@ -689,12 +731,12 @@ void displayCurrentTime(unsigned int secondsToDisplay)
   matrix.print("Time");
   matrix.setCursor(xPos, 8); 
   matrix.print(dispbuf);
-
   delay(secondsToDisplay);
+
 } // end displayCurrentTime()
 
 
-// Start bus scrolling across the screen and plays sound
+// Start bus scrolling across the screen and play sound
 void displayBus(bool withSound)
 {
   int scrollDelay = 120;
@@ -706,8 +748,9 @@ void displayBus(bool withSound)
     // Start playing a file, then we can do stuff while waiting for it to finish
     // File names should be < 8 characters
     // moover1.mp3 is cow sound, arrive2x.mp3 is woman announcing moover
-    if (! musicPlayer.startPlayingFile("arrive2x.mp3")) 
-    { Serial.println(F("Could not open mp3 file on SD card")); }
+    char mp3FileName[] = "arrive2x.mp3";
+    if (! musicPlayer.startPlayingFile(mp3FileName))
+    { Serial.println(F("Could not open arrive2x.mp3 file on SD card")); }
     
     // while sound is playing, scroll the bus across the display
     while (musicPlayer.playingMusic ) 
@@ -730,10 +773,40 @@ void displayBus(bool withSound)
       delay(scrollDelay);
     }
   }      
-  
+
   setSpeakerVolume(255); // Turn speaker off
   
 }  // end displayBus()
+
+
+// Display Happy New Year for first 10 minutes of the new year
+void displayHappyNewYear()  
+{
+  
+  matrix.setTextSize(2);  // large text
+
+  const char  str[]   = "Happy New Year"; 
+  static int  textX   = matrix.width(); 
+  int       textMin = sizeof(str) * -12;
+  static long   hue = 0;
+  
+  matrix.fillScreen(0); // Clear background
+
+  // Draw big scrolly text on top
+  matrix.setTextColor(matrix.ColorHSV(hue, 255, 255, true));
+  matrix.setCursor(textX, 1);
+  matrix.print(str);
+
+  // Move text left (w/wrap), increase hue
+  if((--textX) < textMin) textX = matrix.width();
+  hue += 7;
+
+  // Update display
+  matrix.swapBuffers(false);
+
+  matrix.setTextSize(1);  // go back to medium text
+
+}  // displayHappyNewYear()
 
 
 uint16_t setDisplayColor(colorme_t colorme)
@@ -767,9 +840,10 @@ void playTwoMinWarning(time_t nextMooverTime)
   setSpeakerVolume(analogRead(VOLUMEPIN) / 11);  // lower number is higher volume
 
   // Start playing sound file
-  // File names should be < 8 characters  
-  if (! musicPlayer.startPlayingFile("twomin1.mp3"))
-  { Serial.println(F("Could not open mp3 file on SD card")); }
+  // File names should be < 8 characters
+  char mp3FileName[] = "twomin1.mp3";
+  if (! musicPlayer.startPlayingFile(mp3FileName))
+  { Serial.println(F("Could not open twomin1.mp3 file on SD card")); }
 
   // while sound is playing update the time
   while (musicPlayer.playingMusic )
@@ -796,7 +870,7 @@ void setSpeakerVolume(byte volumeLevel)
     musicPlayer.setVolume(volumeLevel, volumeLevel);  
     digitalWrite(DISABLE_AUDIO, HIGH);  // enable audio amp
   }
-  
+
 
 }
 
