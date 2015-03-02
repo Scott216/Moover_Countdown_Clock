@@ -69,10 +69,15 @@ Change Log:
 12/18/14 v1.53   Added return 0 to non-void functions to get rid of warning
 12/30/14 v1.54   Program was locking up because char buf[20]; was not long enough. I increased to 30
 01/01/14 v1.55   Changed holiday status.  On Thursday 1/1/15 clock was showing countdown to Saturday.  Added Happy New Year
-
+01/12/15 v1.56   Added time offset to account for compile & upload time.  Changed display update from 5 seconds to 1 second
+01/01/16 v1.57   Changed display delay back to 5 seconds. Added displayTimeWithSeconds()
 */
-#define VERSION "v1.55"
 
+
+#define VERSION "v1.57"
+
+#include <Arduino.h>
+#include <HardwareSerial.h>
 #include <Adafruit_GFX.h>    // http://github.com/adafruit/Adafruit-GFX-Library
 #include <RGBmatrixPanel.h>  // http://github.com/protonmaster/RGB-matrix-Panel
 #include <Wire.h>            // http://arduino.cc/en/reference/wire
@@ -156,6 +161,7 @@ tmElements_t tm;
 // Function Prototypes
 void displayCountdown(time_t nextMooverTime);
 void displayCurrentTime(unsigned int secondsToDisplay);
+void displayTimeWithSeconds (unsigned int secondsToDisplay);
 void displayBus(bool withSound);
 void displayHappyNewYear();
 void playTwoMinWarning(time_t nextMooverTime);
@@ -212,7 +218,7 @@ void setup()
   else
   { Serial.println(F("RTC is NOT running!")); }
   
-//  RTC.adjust(DateTime(__DATE__, __TIME__));       // Will set the RTC clock to the time when program was compiled
+//  RTC.adjust(DateTime(__DATE__, __TIME__) + 26);  // sets the RTC clock to the time when program was compiled + 28 seconds to account for upload/compile time
 //  RTC.adjust(DateTime(2014, 2, 8, 7, 49, 50 ));   // use for debugging, sets time to 10 seconds before moover comes
 //  RTC.adjust(DateTime(2014, 11, 2, 1, 59, 50 ));  // November Daylight Savings Test
 //  RTC.adjust(DateTime(2014, 3, 9, 1, 59, 50 ));   // March Daylight Savings Test
@@ -225,6 +231,17 @@ void setup()
   DateTime now = RTC.now();
   sprintf(buf, "Time: %d/%d/%d %02d:%02d:%02d", now.month(), now.day(), now.year(), now.hour(), now.minute(), now.second());
   Serial.println(buf);
+
+  // Display version number
+  matrix.setTextColor(setDisplayColor(COLOR_TIME)); 
+  matrix.setCursor(16, 5); 
+  matrix.fillScreen(CLEAR_DISP);
+  matrix.print(VERSION);
+  delay(2000);
+
+  
+  //  Display time with seconds for 6 so you can see how accurate it is
+  displayTimeWithSeconds(15); 
 
 } // end setup()
 
@@ -273,7 +290,7 @@ void loop()
   if ((long) (millis() - showCurrentTimeTimer) > 0 && !isMoverComingSoon && !showHappyNewYear )
   {
     displayCurrentTime(3000); // display time for 3 seconds
-    showCurrentTimeTimer = millis() + 5000UL; // show again in 5 seconds
+    showCurrentTimeTimer = millis() + 5000UL; // show again in 1 second
     moover_hrs_prev = -1;  // forces hours to refresh in display
     moover_min_prev = -1;  // forces minutes to refresh in display
     // If daytime, clear dispaly for countdown timer
@@ -721,8 +738,9 @@ void displayCurrentTime(unsigned int secondsToDisplay)
   { hour12 = now.hour() - 12; }
   else
   { hour12 = now.hour(); }
+  
   sprintf(dispbuf, "%d:%02d", hour12, now.minute());
-
+  
   int xPos;
   (hour12 >= 10) ? xPos = 17 : xPos = 20;
   matrix.fillScreen(CLEAR_DISP);
@@ -734,6 +752,29 @@ void displayCurrentTime(unsigned int secondsToDisplay)
   delay(secondsToDisplay);
 
 } // end displayCurrentTime()
+
+// Display the time, snowing the seconds,
+// This is just used at startup to see how accurate the time is
+void displayTimeWithSeconds (unsigned int secondsToDisplay)
+{
+
+  char dispbuf[30];
+  uint32_t displayEndTime = millis()  + (secondsToDisplay * 1000UL);
+  
+  matrix.setTextColor(setDisplayColor(COLOR_TIME)); 
+  while ( displayEndTime > millis() )
+  {
+    DateTime now = RTC.now();  // refresh time
+    sprintf(dispbuf, "%d:%02d:%02d", now.hour(), now.minute(), now.second());
+    matrix.fillScreen(CLEAR_DISP);
+    matrix.setCursor(7, 5); 
+    matrix.print(dispbuf);
+    delay(250);
+  }
+ 
+  matrix.fillScreen(CLEAR_DISP);
+  
+}  // end displayTimeWithSeconds()
 
 
 // Start bus scrolling across the screen and play sound
@@ -806,7 +847,7 @@ void displayHappyNewYear()
 
   matrix.setTextSize(1);  // go back to medium text
 
-}  // displayHappyNewYear()
+}  // end displayHappyNewYear()
 
 
 uint16_t setDisplayColor(colorme_t colorme)
@@ -830,7 +871,7 @@ uint16_t setDisplayColor(colorme_t colorme)
       break;
   }
   return returnColor;
-}  // setDisplayColor()
+}  // end setDisplayColor()
 
 
 // Play two minute warning sound
@@ -854,7 +895,8 @@ void playTwoMinWarning(time_t nextMooverTime)
 
   setSpeakerVolume(255); // Turn speaker off
 
-} // playTwoMinWarning()
+} // end playTwoMinWarning()
+
 
 // 255 is lowest volume, zero is highest
 // There is hum when not playing anything, to avoid, disable audio amp
@@ -871,7 +913,6 @@ void setSpeakerVolume(byte volumeLevel)
     digitalWrite(DISABLE_AUDIO, HIGH);  // enable audio amp
   }
 
-
-}
+}  // end setSpeakerVolume()
 
 
